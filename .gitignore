@@ -29,3 +29,6 @@ coverage.xml
 .autocc/flag
 .autocc/context.json
 .autocc/decisions.log
+
+# ap2 board lock (runtime)
+TASKS.md.lock
