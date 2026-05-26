@@ -6,16 +6,19 @@ extension point — or, where none exists, record the gap so downstream
 installer / hook tasks can plan a polyfill, a documented skip, or an
 accepted limitation.
 
-Findings here are pinned to **codex-cli 0.128.0** as installed by
+Findings here are pinned to **codex-cli 0.132.0** as installed by
 Homebrew at `/opt/homebrew/bin/codex` (npm package `@openai/codex`,
 shipping a precompiled Rust binary under
 `@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex`).
-Where the codex binary's `--help` text doesn't surface a behavior,
-I cite the strings table extracted from that binary — most internal
-type names, hook event identifiers, and JSON wire shapes are reachable
-that way, even though they aren't in the CLI help. Where a claim
-depends on a shape that wasn't directly verifiable (e.g. specific
-JSON-RPC method names), I say so explicitly rather than asserting.
+TB-9 / TB-10 re-validated against 0.132.0 (homebrew) and 0.133.0
+(user-local `npm install -g`); the hook-discovery + dispatcher
+findings hold across both. Where the codex binary's `--help` text
+doesn't surface a behavior, I cite the strings table extracted from
+that binary — most internal type names, hook event identifiers, and
+JSON wire shapes are reachable that way, even though they aren't in
+the CLI help. Where a claim depends on a shape that wasn't directly
+verifiable (e.g. specific JSON-RPC method names), I say so explicitly
+rather than asserting.
 
 Out-of-scope surfaces (Codex Cloud, the desktop app, the remote
 exec-server, multi-agent v2 features) are not covered — autocc v1 is
@@ -33,30 +36,47 @@ files inside that the autocc installer cares about:
 
 | Path | Role | Equivalent in Claude Code |
 |---|---|---|
-| `~/.codex/config.toml` | Single-file user config. TOML. Holds model selection, sandbox, MCP servers, **and a top-level `[hooks]` table** (the codex binary's `HookStateToml` deserializer accepts `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, and the other CamelCase hook event names directly as table keys). | `~/.claude/settings.json` |
+| `~/.codex/config.toml` | Single-file user config. TOML. Holds model selection, sandbox, MCP servers, **and a top-level `[hooks]` table** (the codex binary's `HookEventsToml` deserializer accepts `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, and the other CamelCase hook event names directly as table keys). **This is the working hook surface on 0.132 / 0.133** — see §1c for why plugin-bundled `hooks.json` is silently dropped by the dispatcher. The per-handler `state.trusted_hash` field is also written here by codex's TUI `/hooks` review (TB-10). | `~/.claude/settings.json` |
 | `~/.codex/skills/` | User-installed skills (peer of the `~/.codex/skills/.system/` directory codex ships preinstalled — `skill-creator`, `plugin-creator`, `skill-installer`, `imagegen`, `openai-docs`). The `skill-installer` skill defaults its dest path to `${CODEX_HOME:-$HOME/.codex}/skills/<skill-name>`. Each skill is `<skill>/SKILL.md` with YAML frontmatter `name:` and `description:`. | `~/.claude/skills/<skill>/SKILL.md` |
 | `~/plugins/<name>/` (home-rooted) or `<repo-root>/plugins/<name>/` (repo-rooted) | Plugins. A plugin is a directory with `.codex-plugin/plugin.json` plus optional `skills/`, `hooks.json`, `.mcp.json`, `.app.json`, `assets/`. **Discovery is marketplace-driven, not filesystem-scan** — codex's `core-plugins/src/loader.rs` reads plugins from marketplaces, so the plugin folder can technically live anywhere the marketplace's `source.path` points. `~/plugins/<name>/` is the documented convention (from `plugin-creator/SKILL.md`); `~/.codex/plugins/` is NOT a Codex convention and is not referenced anywhere in the plugin-creator or skill-installer documentation. | n/a (Claude Code's nearest analog is shipping a skill + hook + statusline bundle as separate files under `~/.claude/`) |
 | `~/.agents/plugins/marketplace.json` (or `<repo>/.agents/plugins/marketplace.json`) | Marketplace index listing plugin entries with `source.path`, `policy.installation`, `policy.authentication`, `category`. Codex's plugin-creator skill documents the exact shape. | n/a |
 | `~/.codex/sessions/` | Per-session rollout state. Read-only from an installer's perspective. | `~/.claude/projects/` rollout |
 | `~/.codex/memories/` | Persistent memory store (gated on `features.memories`, currently `experimental, false`). | `~/.claude/CLAUDE.md` + per-project `CLAUDE.md` |
 
-`autocc install --agent codex` should write the plugin folder at
+`autocc install --agent codex` writes the plugin folder at
 `~/plugins/autocc/` (the home-rooted convention from
-`plugin-creator/SKILL.md`) and register it via a marketplace entry
+`plugin-creator/SKILL.md`) and registers it via a marketplace entry
 in `~/.agents/plugins/marketplace.json` with
 `source.path: ./plugins/autocc` (which resolves relative to the
 marketplace's home anchor — per `plugin-creator/SKILL.md`'s
 worked example, "with `~/.agents/plugins/marketplace.json`,
 `./plugins/<plugin-name>` resolves to `~/plugins/<plugin-name>`",
 NOT to `~/.agents/plugins/<name>/` as a naive relative resolution
-would suggest).
-The skills and the hook script live inside the plugin folder; only
-the marketplace entry sits outside it. The plugin-shaped install is
-the idiomatic choice — Codex has explicit infrastructure for
-plugins (marketplace, `core-plugins/src/loader.rs`, `PLUGIN_ROOT` /
-`CLAUDE_PLUGIN_ROOT` env vars that the binary exposes to hook
-commands), and uninstall reduces to deleting one directory plus one
-marketplace entry.
+would suggest). Skills live inside the plugin folder.
+
+**TB-10 update:** The hook *registration*, however, no longer lives
+solely inside the plugin folder. The installer also writes a
+marker-bounded `[[hooks.<Event>]]` block into
+`${CODEX_HOME:-~/.codex}/config.toml`, because the plugin-bundled
+`hooks.json` is silently dropped by codex 0.132 / 0.133's dispatcher
+(upstream issue openai/codex#16430: `codex-rs/core/src/plugins/
+manifest.rs` parses `skills`, `mcpServers`, `apps` but NOT `hooks`,
+and hook discovery only scans config folders, never plugin roots).
+The config-layer entry is the working hook surface today. The plugin
+manifest still references `hooks: "./hooks.json"` and the hook script
+still lives under `~/plugins/autocc/hooks/` so the absolute command
+path stays under one install root; when codex eventually merges
+plugin hooks into the dispatcher, both surfaces will fire, and the
+binary's normalized hook identity (command + matcher + event)
+collapses the duplicate.
+
+That config-layer write does "leak" install state outside the plugin
+folder, but only into a single delimited block bounded by sentinel
+comments (`# >>> autocc managed hooks (do not edit) >>>` /
+`# <<< autocc managed hooks <<<`). `autocc uninstall --agent codex`
+strips the block idempotently, preserving any unrelated user content
+(including the user's own `[[hooks.<Event>]]` entries placed outside
+our markers).
 
 Alternative install paths exist — because discovery is
 marketplace-driven, the installer could put the plugin folder under
@@ -89,26 +109,67 @@ a runtime probe.
 
 The runnable extension surface, in the order autocc cares about:
 
-1. **Hooks.** First-class. Configured under `[hooks]` in
-   `config.toml` (per-user) or under a plugin's `hooks.json` (sharable).
-   Hook events are listed in §2 below. Implementation lives in
-   `codex-rs/hooks/`, dispatched by `engine::dispatcher` via
-   `engine::command_runner`. Hook handlers can be `Command` (spawn a
-   process, give it JSON on stdin, parse JSON on stdout) with fields
-   `command`, `timeout`, `async`, `statusMessage`, `agent`, plus a
-   `matcher` regex (PreToolUse-only).
+1. **Hooks.** First-class — but the working surface is `[hooks]` in
+   `config.toml`, NOT plugin-bundled `hooks.json`. Hook events are
+   listed in §2 below. Implementation lives in `codex-rs/hooks/`,
+   dispatched by `engine::dispatcher` via `engine::command_runner`.
+   Hook handlers can be `Command` (spawn a process, give it JSON on
+   stdin, parse JSON on stdout) with fields `command`, `timeout`,
+   `async`, `statusMessage`, `agent`, plus a `matcher` regex
+   (PreToolUse-only).
+   - **The plugin hooks gap (TB-10).** Plugin-bundled `hooks.json`
+     **does not fire** on codex 0.132 / 0.133. Upstream issue
+     openai/codex#16430 (confirmed against the local 0.132 + 0.133
+     binaries): `codex-rs/core/src/plugins/manifest.rs` parses
+     `skills`, `mcpServers`, and `apps` from the plugin manifest but
+     NOT `hooks`, and hook discovery only scans config folders, never
+     plugin roots. Even with `--enable plugin_hooks` and
+     `--dangerously-bypass-hook-trust`, `codex exec` does not spawn
+     plugin hook commands. The supported, working path is `[hooks]`
+     in `${CODEX_HOME:-~/.codex}/config.toml` — per the official
+     Codex hooks docs and issue #16430's own reporter, hooks placed
+     there "work immediately."
    - **Feature flag:** `codex_hooks` is `stable, true`. A
-     newer `plugin_hooks` flag is `under development, false` and
-     reportedly controls whether plugin-bundled hooks merge into the
-     dispatcher; if the install path goes plugin-only, the installer
-     should explicitly enable it via `codex --enable plugin_hooks` or
-     `-c features.plugin_hooks=true` when running on a build where it
-     defaults off.
+     newer `plugin_hooks` flag graduated to `stable, true` on
+     0.133.0 (it was `under development, false` on 0.128.0 when this
+     doc was first written), but the dispatcher behavior is unchanged
+     — flag-on does not actually fire plugin hooks. Don't take the
+     stable-flag label as evidence the path works; verify against
+     #16430 / TB-10's `docs/codex-smoke-results.md`.
+   - **Hook trust gate.** Non-managed command hooks must be reviewed
+     and trusted before they run; the review is TUI-only via the
+     `/hooks` slash command (binary strings: `Hooks need review`,
+     `New hook - review required`, `1 hook needs review before it can
+     run`, `Modified since last trusted - review required`, source
+     file `startup_hooks_review.rs`). Trust state persists in
+     `config.toml` itself — alongside each `[[hooks.<Event>]]` entry,
+     codex's TUI review writes a `state = { enabled = true,
+     trusted_hash = "..." }` sub-table (binary's `HookStateToml`
+     deserializer + `MatcherGroup` with `state` + `matcher` +
+     `hooks` fields). The hash algorithm + canonical input are NOT
+     surfaced in the binary's strings table at 0.132 / 0.133, so
+     pre-seeding `trusted_hash` non-interactively is impractical
+     (would require reverse-engineering the hash inputs). The
+     `--dangerously-bypass-hook-trust` flag is the documented
+     non-interactive bypass, but TB-9's live smoke confirmed it does
+     NOT cause `codex exec` to actually spawn hook commands on
+     0.132 / 0.133 — the dispatcher gap is independent of the trust
+     state. The autocc-managed "managed hooks" pathway
+     (`/etc/codex/managed_config.toml` + `allow_managed_hooks_only`
+     requirements flag) is auto-trusted because installation requires
+     root, but is therefore not reachable from a user-mode autocc
+     install.
    - **Hook env vars:** the binary passes `PLUGIN_ROOT`,
      `CLAUDE_PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_DATA` to hook
      commands. The Claude-prefixed aliases are deliberate — Codex
      mirrors the Claude Code env-var contract so a hook written for
-     Claude Code mostly Just Works.
+     Claude Code mostly Just Works. **Caveat (per TB-9):** these env
+     vars point at the *plugin install directory*
+     (`$CODEX_HOME/plugins/cache/<mp>/<name>/<version>/`), NOT the
+     project root. autocc's hook script uses
+     `AUTOCC_PROJECT_DIR → CLAUDE_PROJECT_DIR → CODEX_PROJECT_DIR →
+     hook_input.cwd` and treats PLUGIN_ROOT only as a synthetic-test
+     fallback.
 2. **Skills.** Match Claude Code's skill model closely. YAML
    frontmatter requires `name`, `description`. Codex additionally
    recognizes an optional `metadata` block (e.g. `short-description`).

@@ -421,3 +421,176 @@ on each minor release, since two consecutive minors have shipped
 with the same gap. The autocc-side smoke is hardened and ready;
 flipping `decisions.log` from absent to present requires only that
 codex starts spawning the configured hook command.
+
+## TB-10 update — hook re-homed to config layer, trust spike completed
+
+TB-9's "no hook command of any shape ever spawns under `codex
+exec` on 0.132 / 0.133" wasn't actually two failures stacked
+together — it was upstream issue openai/codex#16430 doing the
+work: codex's plugin manifest parser only reads `skills`,
+`mcpServers`, and `apps`, never `hooks`. The autocc-side `hooks.json`
+inside the plugin folder was never going to be wired into the
+dispatcher, no matter what trust state we got into. TB-10 splits
+the residual work in two:
+
+### 1. Cross-references (upstream)
+
+The two upstream tracking items the operator should follow:
+- **openai/codex#16430** — "plugin-bundled `hooks.json` not parsed
+  from manifest." This is the issue that captures the gap autocc
+  hit. The reporter explicitly confirmed that placing the same
+  handler entries in `~/.codex/hooks.json` (or in
+  `~/.codex/config.toml`'s `[hooks]` table) "works immediately."
+- **openai/codex#17532** — "PluginHooks feature flag graduated to
+  stable on 0.133.0, but dispatcher still does not fire plugin
+  hooks." Confirms what the 2026-05-22 re-validation observed: the
+  stable-flag label is not evidence the path works.
+- The official Codex hooks docs (linked from `codex --help` and
+  the binary's startup messages) describe `config.toml` `[hooks]`
+  as the canonical install path; the plugin-bundled hooks model
+  is documented as "under development / coming with the next
+  plugin loader update."
+
+### 2. Retraction — config-layer hooks ARE the right install path
+
+The pre-TB-10 "Recommendations for next steps" item #3 in this
+doc said:
+
+> **Do NOT** drift autocc's install path to accommodate this. The
+> plugin install + `hooks.json` shape is correct against the
+> documented contract … Working around the dispatcher gap by
+> writing a `[hooks]` block into the user's `~/.codex/config.toml`
+> would leak install state outside the plugin folder (against the
+> marketplace-driven discovery model the docs lay out) and would
+> be obsolete the moment codex ships the fix. The smoke fixture's
+> `_register_user_hooks_in_config` step is scoped to the test's
+> sandboxed HOME for the same reason; it must not appear in
+> `src/autocc/installer.py`.
+
+**That recommendation is retracted.** The premise — that
+plugin-bundled `hooks.json` is the documented contract and the
+config-layer path is a workaround — was wrong on the merits:
+
+- The official Codex docs and the upstream maintainer (issue
+  #16430) both say config-layer is the supported, working path
+  today. Plugin-bundled hooks are the feature in progress, not
+  the canonical surface.
+- The "leak install state outside the plugin folder" objection
+  was real but mis-weighted: `~/.codex/config.toml` is already a
+  multi-tenant user file that codex's own `/hooks` review, `codex
+  mcp add`, `codex plugin add`, `[projects.<path>] trust_level`
+  bookkeeping, and the TUI's `tui.*` settings all write to. autocc
+  joining that list — in a single marker-delimited block bounded
+  by sentinel comments — is consistent with the file's actual
+  contract, not a violation of it.
+- The "obsolete the moment codex ships the fix" objection assumed
+  duplicate registration would cause double-firing. It won't:
+  codex's normalized hook identity collapses duplicate
+  `command + matcher + event` tuples, so when plugin hooks finally
+  land, the plugin-bundled `hooks.json` and the config-layer block
+  resolve to the same handler and fire once.
+
+TB-10's installer change (this commit) writes a marker-bounded
+`[[hooks.<Event>]]` block into `${CODEX_HOME:-~/.codex}/config.toml`
+in addition to (not instead of) the plugin-bundled `hooks.json`.
+The plugin manifest, skills tree, and marketplace entry are
+unchanged — skills work via the plugin, as the live run proved
+end-to-end. `autocc uninstall --agent codex` strips the
+config-layer block idempotently, preserving any user `[[hooks.*]]`
+entries placed outside our markers.
+
+### 3. Hook-trust persisted state — spike outcome
+
+The trust gate the previous re-validations hit is real: codex's
+binary contains `HookTrustStatus`, `HookTrustStatus.ts`,
+`startup_hooks_review.rs`, `Modified since last trusted - review
+required`, `1 hook needs review before it can run`, and persists
+trust as a `trusted_hash` field on each hook handler. The spike's
+question was: can autocc pre-seed that trust state at install time
+so its own hook fires non-interactively on first launch?
+
+**Where trust persists.** The binary's strings table exposes the
+TOML deserializer field names: `HookEventsToml` (top-level), then
+`MatcherGroup { state, matcher, hooks }` per entry, where `state`
+is a `HookStateToml { enabled, trusted_hash }`. So the persisted
+shape is inline in `config.toml`, alongside each
+`[[hooks.<Event>]]` block:
+
+    [[hooks.Stop]]
+    state = { enabled = true, trusted_hash = "<hex>" }
+    hooks = [{ type = "command", command = "..." }]
+
+We confirmed `state_5.sqlite` does NOT contain a hook-trust table
+— trust is purely a TOML-side concern. The `<hex>` value is what
+codex's TUI review writes after the user confirms the hook via
+`/hooks`.
+
+**Why we can't pre-seed it on 0.132 / 0.133.** Two reasons,
+either of which is decisive on its own:
+
+1. **Hash algorithm + canonical input are not published.** The
+   binary's strings table names the field (`trusted_hash`) and
+   the struct (`HookStateToml`) but does not expose the hashing
+   primitive or the byte-string it canonicalizes. Reverse-engineering
+   the hash inputs from the binary (likely SHA-256 over some
+   canonical serialization of `command + matcher + event`, but
+   the exact form is conjecture) would be brittle — a 0.134
+   refactor could silently shift the canonical input and every
+   pre-seeded autocc install would re-prompt for review without
+   any code change on our side. The downstream maintenance cost
+   makes this a non-starter even if we got the bytes right today.
+
+2. **Even with trust bypassed, `codex exec` doesn't fire plugin
+   hooks on 0.132 / 0.133.** TB-9's live smoke established this
+   independently of the trust state: `--dangerously-bypass-hook-trust`
+   prints its acknowledgement (`` `--dangerously-bypass-hook-trust`
+   is enabled. Enabled hooks may run without review for this
+   invocation. ``), but no hook command is spawned. The dispatcher
+   gap is upstream-side and not unlockable from autocc's install
+   path. So even if we hashed correctly, the result would be a
+   trusted hook that still doesn't fire on `codex exec`.
+
+The "managed hooks" pathway (`/etc/codex/managed_config.toml` +
+`allow_managed_hooks_only` requirements flag) auto-trusts hooks
+loaded from the managed config layer, because installing them
+requires root. autocc is a user-mode installer, so this path is
+not reachable.
+
+**Determination: option (b) per the briefing.** Non-interactive
+hook firing is **not feasible** on codex 0.132 / 0.133 via the
+avenues explored (pre-seeded `trusted_hash`, `--dangerously-bypass-hook-trust`,
+`--enable plugin_hooks`, managed-hooks layer). The config-layer
+install is landed regardless, so the moment codex ships the
+dispatcher fix (or publishes the `trusted_hash` hash algorithm,
+or routes `--dangerously-bypass-hook-trust` past the dispatcher
+gate), autocc is already shaped correctly. The TUI `/hooks`
+review remains the one-time human-gated step on first run; once
+the user trusts the autocc hook, codex writes the `trusted_hash`
+inline in `config.toml` and subsequent `codex exec` runs honor it
+(once the dispatcher gap closes).
+
+### 4. Net status
+
+- **Installer (TB-10):** ✅ landed. `autocc install --agent codex`
+  now writes `[[hooks.PreToolUse]]` / `[[hooks.PermissionRequest]]`
+  / `[[hooks.Stop]]` into `${CODEX_HOME}/config.toml` in a
+  marker-bounded block, in addition to keeping the plugin
+  manifest + skills + plugin-bundled `hooks.json`. Uninstall
+  idempotently strips the config-layer block. Unit tests pin the
+  new behavior under `tests/test_installer.py::test_codex_install_writes_config_layer_hooks_block`
+  and four siblings.
+- **Docs (TB-10):** ✅ corrected. `docs/codex-mapping.md` §1a / §1c
+  reflect the dispatcher gap + the trust persistence shape;
+  pinned codex version bumped from 0.128.0 → 0.132.0.
+- **Live smoke:** still red on 0.132 / 0.133 — the autocc-side
+  fixes (TB-9's project-dir resolution + Stop-decision logging,
+  TB-10's config-layer install) are durable, but the dispatcher
+  gap is upstream. Operator re-runs the smoke per the
+  "Recommendations" section above on each codex-cli minor
+  release.
+- **Trust spike:** ✅ documented; determination is option (b)
+  (non-interactive firing impossible on 0.132 / 0.133 via the
+  avenues explored). The config-layer install positions autocc
+  so a future codex release that closes the dispatcher gap will
+  fire the autocc hook directly, with a single TUI trust step on
+  first run.

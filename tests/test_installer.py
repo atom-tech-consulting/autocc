@@ -15,6 +15,8 @@ import pytest
 from autocc.installer import (
     CODEX_HOOK_BASENAME,
     CODEX_HOOK_EVENTS,
+    CODEX_HOOKS_BEGIN_MARKER,
+    CODEX_HOOKS_END_MARKER,
     CODEX_PLUGIN_NAME,
     HOOK_MARKER,
     SKILL_NAMES,
@@ -152,20 +154,32 @@ def test_status_reports_wired_after_install(fake_home: Path, capsys):
 
 
 @pytest.fixture
-def codex_paths(tmp_path: Path) -> tuple[Path, Path]:
-    """Return (plugin_root, marketplace_path) anchored under tmp_path."""
+def codex_paths(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Return (plugin_root, marketplace_path, codex_home) anchored under tmp_path.
+
+    ``codex_home`` is the sandbox stand-in for ``${CODEX_HOME:-~/.codex}``; the
+    TB-10 config-layer hook install writes ``config.toml`` under it. The dir
+    is intentionally NOT pre-created so the installer's mkdir path is
+    exercised.
+    """
     plugin_root = tmp_path / "codex_plugins"
     plugin_root.mkdir()
     marketplace_path = tmp_path / "agents" / "plugins" / "marketplace.json"
-    # don't pre-create the parent dir — installer should mkdir as needed
-    return plugin_root, marketplace_path
+    codex_home = tmp_path / "codex_home"
+    # don't pre-create the parent dirs — installer should mkdir as needed
+    return plugin_root, marketplace_path, codex_home
 
 
 def test_codex_install_creates_plugin_tree_and_marketplace_entry(
-    codex_paths: tuple[Path, Path],
+    codex_paths: tuple[Path, Path, Path],
 ):
-    plugin_root, marketplace_path = codex_paths
-    rc = install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    plugin_root, marketplace_path, codex_home = codex_paths
+    rc = install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     assert rc == 0
 
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
@@ -220,11 +234,21 @@ def test_codex_install_creates_plugin_tree_and_marketplace_entry(
     assert entry["category"]
 
 
-def test_codex_install_is_idempotent(codex_paths: tuple[Path, Path]):
-    plugin_root, marketplace_path = codex_paths
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+def test_codex_install_is_idempotent(codex_paths: tuple[Path, Path, Path]):
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     before = marketplace_path.read_text()
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     after = marketplace_path.read_text()
     assert before == after, "second install should be a no-op against marketplace"
 
@@ -238,9 +262,9 @@ def test_codex_install_is_idempotent(codex_paths: tuple[Path, Path]):
 
 
 def test_codex_install_preserves_existing_marketplace_entries(
-    codex_paths: tuple[Path, Path],
+    codex_paths: tuple[Path, Path, Path],
 ):
-    plugin_root, marketplace_path = codex_paths
+    plugin_root, marketplace_path, codex_home = codex_paths
     # Pre-existing user marketplace with another plugin and a custom display name
     marketplace_path.parent.mkdir(parents=True, exist_ok=True)
     marketplace_path.write_text(json.dumps({
@@ -256,7 +280,12 @@ def test_codex_install_preserves_existing_marketplace_entries(
         ],
     }))
 
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
 
     payload = json.loads(marketplace_path.read_text())
     # top-level metadata preserved
@@ -269,15 +298,25 @@ def test_codex_install_preserves_existing_marketplace_entries(
 
 
 def test_codex_uninstall_removes_plugin_and_marketplace_entry(
-    codex_paths: tuple[Path, Path],
+    codex_paths: tuple[Path, Path, Path],
 ):
-    plugin_root, marketplace_path = codex_paths
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
     assert plugin_dir.is_dir()
     assert json.loads(marketplace_path.read_text())["plugins"]
 
-    rc = uninstall(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    rc = uninstall(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     assert rc == 0
     assert not plugin_dir.exists(), "plugin directory should be removed"
 
@@ -290,10 +329,15 @@ def test_codex_uninstall_removes_plugin_and_marketplace_entry(
 
 
 def test_codex_uninstall_preserves_other_marketplace_entries(
-    codex_paths: tuple[Path, Path],
+    codex_paths: tuple[Path, Path, Path],
 ):
-    plugin_root, marketplace_path = codex_paths
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     # Add an unrelated user entry after install
     payload = json.loads(marketplace_path.read_text())
     payload["plugins"].append({
@@ -304,7 +348,12 @@ def test_codex_uninstall_preserves_other_marketplace_entries(
     })
     marketplace_path.write_text(json.dumps(payload, indent=2) + "\n")
 
-    uninstall(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    uninstall(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
 
     after = json.loads(marketplace_path.read_text())
     names = [p["name"] for p in after["plugins"]]
@@ -312,37 +361,208 @@ def test_codex_uninstall_preserves_other_marketplace_entries(
     assert "other-plugin" in names
 
 
-def test_codex_dry_run_writes_nothing(codex_paths: tuple[Path, Path]):
-    plugin_root, marketplace_path = codex_paths
+def test_codex_dry_run_writes_nothing(codex_paths: tuple[Path, Path, Path]):
+    plugin_root, marketplace_path, codex_home = codex_paths
     rc = install(
         agent="codex",
         dry_run=True,
         plugin_root=plugin_root,
         marketplace_path=marketplace_path,
+        codex_home=codex_home,
     )
     assert rc == 0
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
     assert not plugin_dir.exists()
     assert not marketplace_path.exists()
+    # TB-10: dry-run must not write config.toml either.
+    assert not (codex_home / "config.toml").exists()
 
 
-def test_codex_status_reports_unwired(codex_paths: tuple[Path, Path], capsys):
-    plugin_root, marketplace_path = codex_paths
-    rc = status(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+def test_codex_status_reports_unwired(codex_paths: tuple[Path, Path, Path], capsys):
+    plugin_root, marketplace_path, codex_home = codex_paths
+    rc = status(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert "✗" in out
 
 
 def test_codex_status_reports_wired_after_install(
-    codex_paths: tuple[Path, Path], capsys
+    codex_paths: tuple[Path, Path, Path], capsys
 ):
-    plugin_root, marketplace_path = codex_paths
-    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
-    status(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+    status(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
     out = capsys.readouterr().out
     assert "✓" in out
     assert "autocc plugin entry registered" in out
+    # TB-10: status must also surface the config-layer hook block.
+    assert "autocc [hooks] block present in config.toml" in out
+
+
+# --- TB-10: config-layer hook install -------------------------------------
+
+
+def test_codex_install_writes_config_layer_hooks_block(
+    codex_paths: tuple[Path, Path, Path],
+):
+    """The Codex install must register the autocc hook at a config-layer
+    location (``<CODEX_HOME>/config.toml``'s ``[hooks]`` table), not solely
+    inside the plugin folder — the plugin-bundled ``hooks.json`` is silently
+    dropped by codex 0.132's dispatcher (upstream openai/codex#16430)."""
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+
+    config_path = codex_home / "config.toml"
+    assert config_path.is_file(), f"missing {config_path}"
+    text = config_path.read_text()
+
+    # Marker-bounded block present
+    assert CODEX_HOOKS_BEGIN_MARKER in text
+    assert CODEX_HOOKS_END_MARKER in text
+
+    # All three event types are wired
+    for event in CODEX_HOOK_EVENTS:
+        assert f"[[hooks.{event}]]" in text, f"missing [[hooks.{event}]] block"
+        assert event in text  # event name passed as argv to hook script
+
+    # The hook command points at the plugin's hook script absolute path.
+    hook_abspath = (plugin_root / CODEX_PLUGIN_NAME / "hooks" / CODEX_HOOK_BASENAME).resolve()
+    assert str(hook_abspath) in text
+
+    # PreToolUse retains its matcher to scope the (no-op-on-codex) AskUserQuestion
+    # / EnterPlanMode filter — pinning intent for when those tools land.
+    assert 'matcher = "AskUserQuestion|EnterPlanMode"' in text
+
+
+def test_codex_uninstall_removes_config_layer_hooks_block(
+    codex_paths: tuple[Path, Path, Path],
+):
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+    config_path = codex_home / "config.toml"
+    assert CODEX_HOOKS_BEGIN_MARKER in config_path.read_text()
+
+    uninstall(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+
+    # config.toml may still exist (preserved if other content lived there);
+    # the autocc block must be gone.
+    if config_path.exists():
+        post = config_path.read_text()
+        assert CODEX_HOOKS_BEGIN_MARKER not in post
+        assert CODEX_HOOKS_END_MARKER not in post
+
+
+def test_codex_install_config_hooks_is_idempotent(
+    codex_paths: tuple[Path, Path, Path],
+):
+    """Re-running install must not duplicate the [hooks] block."""
+    plugin_root, marketplace_path, codex_home = codex_paths
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+    config_path = codex_home / "config.toml"
+    before = config_path.read_text()
+
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+    after = config_path.read_text()
+
+    assert before == after
+    # Defensive: only one marker pair, not two.
+    assert after.count(CODEX_HOOKS_BEGIN_MARKER) == 1
+    assert after.count(CODEX_HOOKS_END_MARKER) == 1
+
+
+def test_codex_install_preserves_unrelated_user_config(
+    codex_paths: tuple[Path, Path, Path],
+):
+    """Pre-existing user content in config.toml (including an unrelated
+    user-authored ``[hooks]`` entry placed outside our markers) must survive
+    install + uninstall unchanged."""
+    plugin_root, marketplace_path, codex_home = codex_paths
+    codex_home.mkdir(parents=True, exist_ok=True)
+    config_path = codex_home / "config.toml"
+    user_content = (
+        '# User-authored content above any autocc block.\n'
+        '\n'
+        '[projects."/Users/foo/bar"]\n'
+        'trust_level = "trusted"\n'
+        '\n'
+        '[[hooks.PreToolUse]]\n'
+        'matcher = "MyCustomTool"\n'
+        'hooks = [{ type = "command", command = "echo user-hook" }]\n'
+    )
+    config_path.write_text(user_content)
+
+    install(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+
+    after_install = config_path.read_text()
+    # User content is still there verbatim
+    assert "# User-authored content above any autocc block." in after_install
+    assert '[projects."/Users/foo/bar"]' in after_install
+    assert 'matcher = "MyCustomTool"' in after_install
+    assert 'echo user-hook' in after_install
+    # autocc block appended
+    assert CODEX_HOOKS_BEGIN_MARKER in after_install
+
+    uninstall(
+        agent="codex",
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+        codex_home=codex_home,
+    )
+
+    after_uninstall = config_path.read_text()
+    # User content still survives uninstall verbatim
+    assert "# User-authored content above any autocc block." in after_uninstall
+    assert '[projects."/Users/foo/bar"]' in after_uninstall
+    assert 'matcher = "MyCustomTool"' in after_uninstall
+    assert 'echo user-hook' in after_uninstall
+    # autocc block gone
+    assert CODEX_HOOKS_BEGIN_MARKER not in after_uninstall
+    assert CODEX_HOOKS_END_MARKER not in after_uninstall
 
 
 def test_unknown_agent_returns_error(tmp_path: Path, capsys):

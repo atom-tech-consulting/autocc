@@ -47,3 +47,9 @@
 - **Summary:** TB-7's substantive Codex-docs scope was already shipped in 83d9d1b (README `### OpenAI Codex` Install subsection + ARCHITECTURE `### Provider branches` peer). That commit failed verification on exactly one criterion — the `awk '/^# /{n++} END{exit !(n==1)}' README.md` sanity-check — because the awk pattern counts bash `# comment` lines inside fenced code blocks as if they were top-level markdown headings; README had carried 11 such lines since well before TB-7, making this criterion impossible to satisfy on this file regardless of TB-7's edits. Follow-up commit 0b7adbb makes minimal cosmetic edits (bash `# ` → `## ` in code blocks; the `## The task board` markdown example no longer shows `# Tasks` as a literal line, with the title moved into the prose intro inline-code-style) leaving exactly one `^# ` line (the title) in README. All grep + awk verification criteria now pass; `uv run pytest -q` → 79 passed, 2 skipped.
 - **Files:** README.md
 - **Tests:** pass
+
+## [2026-05-22] TB-10: Re-home Codex hooks to config-layer install + crack non-interactive hook trust
+- **Commit:** `6cce3f8`
+- **Summary:** Re-homed Codex hook install to config-layer ([[hooks.*]] in ${CODEX_HOME}/config.toml, marker-bounded + idempotent), kept the plugin manifest/skills/hooks.json untouched per upstream openai/codex#16430, documented the dispatcher-gap + trust-persistence (state.trusted_hash inline) findings in docs/codex-mapping.md §1a/§1c, retracted the prior "do NOT write config.toml [hooks]" recommendation in docs/codex-smoke-results.md with the (b) determination (non-interactive trust pre-seeding impractical on 0.132/0.133 without published hash inputs, and even bypassed trust doesn't unlock codex exec given the independent dispatcher gap), and pinned five new unit tests; pytest -q is 86 passed / 2 skipped.
+- **Files:** src/autocc/installer.py, tests/test_installer.py, docs/codex-mapping.md, docs/codex-smoke-results.md
+- **Tests:** pass

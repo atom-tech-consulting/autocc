@@ -56,6 +56,22 @@ CODEX_MARKETPLACE_DEFAULT_NAME = "autocc"
 CODEX_MARKETPLACE_DEFAULT_DISPLAY_NAME = "autocc"
 CODEX_MARKETPLACE_DEFAULT_CATEGORY = "Productivity"
 
+# Config-layer hook install (TB-10). Codex 0.132's plugin-bundled `hooks.json`
+# is silently dropped by the dispatcher (upstream issue openai/codex#16430:
+# `codex-rs/core/src/plugins/manifest.rs` parses `skills`, `mcpServers`,
+# `apps` but NOT `hooks`, and hook discovery only scans config folders).
+# The supported, working hook surface is the `[hooks]` table in
+# `${CODEX_HOME:-~/.codex}/config.toml` — that's the path the binary's
+# `HookEventsToml` deserializer reads, and it works on every codex release
+# that ships `codex_hooks = stable, true`. So the installer writes a
+# marker-bounded `[hooks]` block into config.toml in addition to the
+# plugin-bundled hooks.json. The plugin entry stays for forward compatibility
+# (when codex eventually wires plugin hook discovery, the binary's normalized
+# hook identity collapses duplicate command+matcher entries).
+CODEX_CONFIG_TOML_NAME = "config.toml"
+CODEX_HOOKS_BEGIN_MARKER = "# >>> autocc managed hooks (do not edit) >>>"
+CODEX_HOOKS_END_MARKER = "# <<< autocc managed hooks <<<"
+
 
 def _claude_home() -> Path:
     return Path(os.environ.get("CLAUDE_HOME", str(Path.home() / ".claude")))
@@ -70,6 +86,126 @@ def _codex_plugin_root() -> Path:
 def _codex_marketplace_path() -> Path:
     """Default location of the home-rooted Codex marketplace index."""
     return Path.home() / ".agents" / "plugins" / "marketplace.json"
+
+
+def _codex_home() -> Path:
+    """Locate ``$CODEX_HOME``, defaulting to ``~/.codex``.
+
+    Used by the config-layer hook install (TB-10): the working hook surface
+    on codex 0.132 / 0.133 is ``${CODEX_HOME}/config.toml``'s ``[hooks]``
+    table, not the plugin-bundled ``hooks.json`` (which the dispatcher
+    silently drops per upstream issue openai/codex#16430).
+    """
+    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+
+
+def _codex_config_path(codex_home: Path | None = None) -> Path:
+    home = codex_home if codex_home is not None else _codex_home()
+    return home / CODEX_CONFIG_TOML_NAME
+
+
+def _codex_config_hooks_block(hook_script_abspath: Path) -> str:
+    """Render the marker-bounded `[hooks]` block for ``config.toml``.
+
+    Emits one ``[[hooks.<Event>]]`` entry per CODEX_HOOK_EVENTS, with each
+    entry wired to ``python3 <abspath> <Event>``. The block is delimited by
+    sentinel comment markers so :func:`_codex_config_merge_hooks` /
+    :func:`_codex_config_strip_hooks` can find and replace it without a
+    full TOML parser — unrelated user content in the same file is preserved.
+
+    The handler shape matches codex's documented `[hooks]` contract (per the
+    binary's `HookEventsToml` deserializer + `HookHandlerConfig::Command`
+    struct: ``type = "command"``, ``command = "..."``). Per-handler state
+    (``enabled`` / ``trusted_hash``) is intentionally omitted: codex's
+    hook-trust review writes the ``trusted_hash`` for an entry once the user
+    confirms it via the TUI ``/hooks`` command. Pre-seeding the hash
+    non-interactively would require knowing the hash algorithm + canonical
+    input, which codex 0.132 does not publish in the binary's strings table
+    — and TB-9's live smoke confirmed even bypassing the review with
+    ``--dangerously-bypass-hook-trust`` does not cause `codex exec` to
+    spawn hook commands on 0.132 / 0.133 (the dispatcher gap is independent
+    of trust state). See docs/codex-smoke-results.md for the full trust
+    investigation outcome.
+    """
+    # The `hooks = [...]` inline-array form keeps the block compact, one entry
+    # per CamelCase event name. We deliberately do NOT emit `[[hooks.<Event>]]`
+    # array-of-tables blocks here — both shapes parse, but the inline form
+    # is shorter, easier to match-and-strip, and matches the shape Codex's
+    # own `/hooks` review writes when persisting trust state inline.
+    abspath = str(hook_script_abspath)
+    lines: list[str] = [CODEX_HOOKS_BEGIN_MARKER]
+    for event in CODEX_HOOK_EVENTS:
+        cmd = f"python3 {abspath} {event}"
+        # TOML strings can contain spaces; need to quote and escape backslashes
+        # / double-quotes. Path components on macOS / Linux don't contain
+        # double-quotes in practice; escape just in case.
+        cmd_escaped = cmd.replace("\\", "\\\\").replace('"', '\\"')
+        if event == "PreToolUse":
+            # Mirror the Claude install's matcher — codex doesn't ship
+            # AskUserQuestion / EnterPlanMode tools, so this matcher never
+            # fires in practice, but pinning it documents intent and avoids
+            # invoking the hook on every Bash/Edit/Write call.
+            lines.append(f'[[hooks.{event}]]')
+            lines.append('matcher = "AskUserQuestion|EnterPlanMode"')
+            lines.append(f'hooks = [{{ type = "command", command = "{cmd_escaped}" }}]')
+        else:
+            lines.append(f'[[hooks.{event}]]')
+            lines.append(f'hooks = [{{ type = "command", command = "{cmd_escaped}" }}]')
+    lines.append(CODEX_HOOKS_END_MARKER)
+    return "\n".join(lines)
+
+
+def _codex_config_merge_hooks(existing: str, block: str) -> str:
+    """Idempotently insert ``block`` into ``existing`` ``config.toml`` text.
+
+    If a prior autocc-managed block exists (marker-bounded), replace it in
+    place; otherwise append. Preserves the user's other ``config.toml``
+    content unchanged, including any ``[hooks]`` entries the user added
+    outside the markers.
+    """
+    begin = CODEX_HOOKS_BEGIN_MARKER
+    end = CODEX_HOOKS_END_MARKER
+    b_idx = existing.find(begin)
+    if b_idx != -1:
+        e_idx = existing.find(end, b_idx)
+        if e_idx != -1:
+            e_idx_end = e_idx + len(end)
+            # Trim the trailing newline (if any) so we don't accumulate
+            # blank lines on repeat installs.
+            tail = existing[e_idx_end:]
+            if tail.startswith("\n"):
+                tail = tail[1:]
+            return existing[:b_idx] + block + ("\n" + tail if tail else "\n")
+    # Append, ensuring a separating newline.
+    sep = "" if existing == "" or existing.endswith("\n") else "\n"
+    if existing and not existing.endswith("\n\n"):
+        sep = ("\n" if not existing.endswith("\n") else "") + "\n"
+    return existing + sep + block + "\n"
+
+
+def _codex_config_strip_hooks(existing: str) -> tuple[str, bool]:
+    """Remove the autocc-managed hook block from ``config.toml`` text.
+
+    Returns ``(new_text, changed?)``. If no managed block is present, returns
+    the input unchanged with ``changed=False``.
+    """
+    begin = CODEX_HOOKS_BEGIN_MARKER
+    end = CODEX_HOOKS_END_MARKER
+    b_idx = existing.find(begin)
+    if b_idx == -1:
+        return existing, False
+    e_idx = existing.find(end, b_idx)
+    if e_idx == -1:
+        return existing, False
+    e_idx_end = e_idx + len(end)
+    # Also consume a trailing newline so we don't leave a blank line.
+    if e_idx_end < len(existing) and existing[e_idx_end] == "\n":
+        e_idx_end += 1
+    # And the preceding newline if it was a sentinel separator we added.
+    b_strip = b_idx
+    if b_strip > 0 and existing[b_strip - 1] == "\n":
+        b_strip -= 1
+    return existing[:b_strip] + existing[e_idx_end:], True
 
 
 def _package_root() -> Path:
@@ -183,13 +319,14 @@ def install(
     claude_home: Path | None = None,
     plugin_root: Path | None = None,
     marketplace_path: Path | None = None,
+    codex_home: Path | None = None,
 ) -> int:
     """Top-level install entry-point.
 
     Dispatches to the Claude or Codex provider per ``agent``. The
     ``claude_home`` arg is honored only when ``agent == "claude"``;
-    ``plugin_root`` / ``marketplace_path`` are honored only when
-    ``agent == "codex"``.
+    ``plugin_root`` / ``marketplace_path`` / ``codex_home`` are honored only
+    when ``agent == "codex"``.
     """
     if agent not in VALID_AGENTS:
         print(f"error: unknown agent: {agent!r} (expected one of {VALID_AGENTS})", file=sys.stderr)
@@ -199,6 +336,7 @@ def install(
             dry_run=dry_run,
             plugin_root=plugin_root or _codex_plugin_root(),
             marketplace_path=marketplace_path or _codex_marketplace_path(),
+            codex_home=codex_home or _codex_home(),
         )
     return _claude_install(
         dry_run=dry_run,
@@ -315,6 +453,7 @@ def uninstall(
     claude_home: Path | None = None,
     plugin_root: Path | None = None,
     marketplace_path: Path | None = None,
+    codex_home: Path | None = None,
 ) -> int:
     """Top-level uninstall entry-point; dispatches per ``agent``."""
     if agent not in VALID_AGENTS:
@@ -325,6 +464,7 @@ def uninstall(
             dry_run=dry_run,
             plugin_root=plugin_root or _codex_plugin_root(),
             marketplace_path=marketplace_path or _codex_marketplace_path(),
+            codex_home=codex_home or _codex_home(),
         )
     return _claude_uninstall(
         dry_run=dry_run,
@@ -413,6 +553,7 @@ def status(
     claude_home: Path | None = None,
     plugin_root: Path | None = None,
     marketplace_path: Path | None = None,
+    codex_home: Path | None = None,
 ) -> int:
     """Top-level status entry-point; dispatches per ``agent``."""
     if agent not in VALID_AGENTS:
@@ -422,6 +563,7 @@ def status(
         return _codex_status(
             plugin_root=plugin_root or _codex_plugin_root(),
             marketplace_path=marketplace_path or _codex_marketplace_path(),
+            codex_home=codex_home or _codex_home(),
         )
     return _claude_status(claude_home=claude_home or _claude_home())
 
@@ -614,8 +756,20 @@ def _strip_marketplace_entry(existing: dict, plugin_name: str) -> tuple[dict, bo
     return out, changed
 
 
-def _codex_install(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) -> int:
+def _codex_install(
+    *,
+    dry_run: bool,
+    plugin_root: Path,
+    marketplace_path: Path,
+    codex_home: Path,
+) -> int:
     """Install autocc as a Codex plugin at ``<plugin_root>/autocc/``.
+
+    Also writes a marker-bounded ``[hooks]`` block into
+    ``<codex_home>/config.toml`` so the autopilot hook actually fires —
+    plugin-bundled ``hooks.json`` is silently dropped by codex 0.132's
+    dispatcher (upstream openai/codex#16430), but the ``[hooks]`` table in
+    ``config.toml`` is the documented working hook surface.
 
     Returns process exit code.
     """
@@ -704,14 +858,48 @@ def _codex_install(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) 
         marketplace_path.write_text(after_text)
         print(f"  wrote marketplace entry: {marketplace_path}")
 
+    # 5. Config-layer hook registration (TB-10). Codex 0.132's plugin
+    # hooks.json is silently dropped by the dispatcher (openai/codex#16430).
+    # The working surface is the `[hooks]` table in `<codex_home>/config.toml`.
+    # We always anchor the command at the plugin's hook script absolute path
+    # so the entry survives even if the user's $PATH is unusual.
+    config_path = _codex_config_path(codex_home)
+    abspath = (plugin_dir / "hooks" / CODEX_HOOK_BASENAME).resolve()
+    block = _codex_config_hooks_block(abspath)
+
+    existing_text = ""
+    if config_path.exists():
+        existing_text = config_path.read_text()
+    merged_text = _codex_config_merge_hooks(existing_text, block)
+
+    if existing_text.strip() == merged_text.strip():
+        print(f"  config.toml [hooks]: already up to date ({config_path})")
+    elif dry_run:
+        print(f"  [dry-run] would write config.toml [hooks] block: {config_path}")
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(merged_text)
+        print(f"  wrote config.toml [hooks] block: {config_path}")
+
     print()
     print(f"Done. {skill_count} skills, {len(CODEX_HOOK_EVENTS)} hook event(s), 1 plugin.")
     print()
-    print("Next: start codex; the plugin loads via the marketplace entry.")
+    print("Next: start codex; the plugin loads via the marketplace entry,")
+    print("and the autopilot hook fires via the config.toml [hooks] block.")
+    print("If codex's TUI prompts you to review the hook (a single one-time")
+    print("step on first run), trust it via `/hooks` — once trusted, codex")
+    print("persists the `trusted_hash` next to each entry and future")
+    print("non-interactive `codex exec` runs honor it.")
     return 0
 
 
-def _codex_uninstall(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) -> int:
+def _codex_uninstall(
+    *,
+    dry_run: bool,
+    plugin_root: Path,
+    marketplace_path: Path,
+    codex_home: Path,
+) -> int:
     """Remove the Codex plugin folder + strip the marketplace entry."""
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
     print(f"autocc uninstall (codex) ← {plugin_dir}")
@@ -749,12 +937,33 @@ def _codex_uninstall(*, dry_run: bool, plugin_root: Path, marketplace_path: Path
                     marketplace_path.write_text(after_text)
                     print(f"  stripped autocc entry from {marketplace_path}")
 
+    # Config-layer hook block (TB-10). Strip the marker-bounded block from
+    # config.toml, preserving any unrelated user content (including the
+    # user's own [hooks] entries placed outside our markers).
+    config_path = _codex_config_path(codex_home)
+    if config_path.exists():
+        before_text = config_path.read_text()
+        stripped_text, changed = _codex_config_strip_hooks(before_text)
+        if changed:
+            if dry_run:
+                print(
+                    f"  [dry-run] would strip autocc [hooks] block from {config_path}"
+                )
+            else:
+                config_path.write_text(stripped_text)
+                print(f"  stripped autocc [hooks] block from {config_path}")
+
     print()
     print("Done.")
     return 0
 
 
-def _codex_status(*, plugin_root: Path, marketplace_path: Path) -> int:
+def _codex_status(
+    *,
+    plugin_root: Path,
+    marketplace_path: Path,
+    codex_home: Path,
+) -> int:
     """Show which Codex plugin artifacts are currently installed."""
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
     print(f"autocc status (codex) @ {plugin_dir}")
@@ -797,4 +1006,19 @@ def _codex_status(*, plugin_root: Path, marketplace_path: Path) -> int:
     )
     mark = "✓" if wired else "✗"
     print(f"  {mark} autocc plugin entry registered")
+
+    # TB-10: config-layer [hooks] block status. This is the surface that
+    # actually fires hooks on codex 0.132 / 0.133; the plugin hooks.json is
+    # dispatcher-dead per upstream openai/codex#16430.
+    print()
+    config_path = _codex_config_path(codex_home)
+    print(f"Config-layer hooks ({config_path}):")
+    if not config_path.exists():
+        print("  ✗ config.toml not present")
+        return 0
+    config_text = config_path.read_text()
+    if CODEX_HOOKS_BEGIN_MARKER in config_text and CODEX_HOOKS_END_MARKER in config_text:
+        print("  ✓ autocc [hooks] block present in config.toml")
+    else:
+        print("  ✗ autocc [hooks] block missing from config.toml")
     return 0

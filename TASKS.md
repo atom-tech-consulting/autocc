@@ -8,7 +8,7 @@
 
 ## Backlog
 
-- [ ] **TB-10** **Re-home Codex hooks to config-layer install + crack non-interactive hook trust** `#codex` `#hooks` `#installer` `#spike` [→ brief](.cc-autopilot/tasks/re-home-codex-hooks-to-config-layer-inst.md)
+- [ ] **TB-11** **Replace Codex e2e smoke with tmux-driven TUI test + document hook-trust prereq** `#codex` `#smoke` `#tests` `#tui` [→ brief](.cc-autopilot/tasks/replace-codex-e2e-smoke-with-tmux-driven.md)
 
 ## Pipeline Pending
 
@@ -23,6 +23,7 @@
 - [x] **TB-5** **Add Codex real-SDK smoke test against examples/taskflow** `#codex` `#smoke` `#tests` [→ brief](.cc-autopilot/tasks/add-codex-real-sdk-smoke-test-against-ex.md)
 - [x] **TB-8** **Make commit-changes' trailer identity default to "Codex" under the Codex install** `#codex` `#skills` `#commit-changes` — Have the Codex installer export AUTOCC_AGENT_NAME=Codex / AUTOCC_AGENT_EMAIL=noreply@openai.com (or document the user-set override) so commit-changes' Co-Authored-By trailer reads "Codex" under the Codex install path rather than the Claude default. [→ brief](.cc-autopilot/tasks/make-commit-changes-trailer-identity-def.md)
 - [x] **TB-7** **Document the Codex install path in README and ARCHITECTURE** `#codex` `#docs` — Add Codex install + hook documentation to README and ARCHITECTURE alongside the existing Claude Code coverage, closing goal.md Done-when bullet #4. [→ brief](.cc-autopilot/tasks/document-the-codex-install-path-in-readm.md)
+- [x] **TB-10** **Re-home Codex hooks to config-layer install + crack non-interactive hook trust** `#codex` `#hooks` `#installer` `#spike` [→ brief](.cc-autopilot/tasks/re-home-codex-hooks-to-config-layer-inst.md)
 
 ## Frozen
 
