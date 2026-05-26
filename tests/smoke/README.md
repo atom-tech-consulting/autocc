@@ -1,8 +1,17 @@
 # Real-SDK smoke tests
 
-End-to-end tests that exercise a full reflector session against the
-[`examples/taskflow`](../../examples/taskflow) fixture using the real
-`claude` CLI.
+End-to-end tests that exercise the real `claude` and `codex` CLIs:
+
+- `test_reflector_e2e.py` — full reflector session against the
+  [`examples/taskflow`](../../examples/taskflow) fixture using the real
+  `claude` CLI.
+- `test_reflector_e2e_codex_tui.py` — tmux-driven `codex` TUI run that
+  asserts the autocc Stop hook fires on an empty taskboard. Requires
+  one-time `autocc install --agent codex` + `/hooks` trust ritual; see
+  the test's docstring and the project README's "Codex smoke setup"
+  section. (The previous exec-based codex smoke was removed in TB-11 —
+  `codex exec` does not fire hooks on codex 0.132 / 0.133, so that
+  expectation was impossible by design.)
 
 ## Opt-in
 

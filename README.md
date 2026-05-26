@@ -267,13 +267,61 @@ pytest                                  # installer + hook unit suite (covers BO
 
 ## Smoke tier — real CLI against examples/taskflow. ~$2-4 per run on Opus.
 ## AUTOCC_REAL_SDK=1 runs BOTH the Claude smoke (real `claude` CLI) and the
-## Codex smoke (real `codex` CLI; requires `codex login` completed).
+## Codex smoke (real `codex` TUI driven via tmux; requires `codex login`
+## completed + the one-time `/hooks` trust ritual below).
 AUTOCC_REAL_SDK=1 uv run pytest -q      # end-to-end reflector tests (Claude + Codex)
 ```
 
-- `AUTOCC_REAL_SDK=1 uv run pytest -q` exercises both `tests/smoke/test_reflector_e2e.py` (Claude smoke, requires `claude` CLI logged in) and `tests/smoke/test_reflector_e2e_codex.py` (Codex smoke, requires `codex login` completed). Either smoke is auto-skipped if the corresponding CLI isn't on `$PATH` / isn't authenticated.
+- `AUTOCC_REAL_SDK=1 uv run pytest -q` exercises both `tests/smoke/test_reflector_e2e.py` (Claude smoke, requires `claude` CLI logged in) and `tests/smoke/test_reflector_e2e_codex_tui.py` (Codex tmux-driven TUI smoke; see "Codex smoke setup" below). Either smoke is auto-skipped if its preconditions aren't met — the Codex smoke prints the precise next command for any missing setup step rather than failing.
 
 See [`tests/smoke/README.md`](tests/smoke/README.md) for what the smokes verify and how they're gated.
+
+### Codex smoke setup (one-time per host)
+
+The Codex smoke drives the real `codex` TUI through a tmux pane (codex
+0.132+ requires a TTY and `codex exec` does not fire hooks on current
+releases — see [`docs/codex-smoke-results.md`](docs/codex-smoke-results.md)
+and upstream openai/codex#16430). Three setup steps unlock the smoke:
+
+1. **Install the autocc hooks into your codex config.** This writes the
+   marker-bounded `[[hooks.*]]` block into `${CODEX_HOME:-~/.codex}/config.toml`:
+
+   ```bash
+   autocc install --agent codex
+   ```
+
+2. **Trust the autocc hooks in the codex TUI.** Codex gates hook
+   execution on a per-handler `trusted_hash` it only writes after the
+   operator confirms the entries interactively — there is no
+   non-interactive equivalent on codex 0.132 / 0.133. Run this once:
+
+   ```bash
+   codex            # launches the TUI
+   # then in the TUI:
+   /hooks           # opens the hook-review pane
+   # trust each of the three autocc entries:
+   #   - PreToolUse
+   #   - PermissionRequest
+   #   - Stop
+   ```
+
+   Codex persists the trust state under
+   `[hooks.state."<config>:<event>:0:0"] trusted_hash = "sha256:..."`
+   inside `config.toml`, so this is a one-time ritual per host.
+
+3. **Run the smoke** (also requires `tmux` — `brew install tmux` on
+   macOS):
+
+   ```bash
+   AUTOCC_REAL_SDK=1 uv run pytest tests/smoke/test_reflector_e2e_codex_tui.py
+   ```
+
+   Budget ~$0.20 of codex usage per run. The test exercises only one
+   tiny prompt + Stop-hook firing; it deliberately does not drive a
+   full Backlog → Complete cycle.
+
+If any of the three preconditions is missing, the smoke skips with a
+message naming the exact command to run to fix it.
 
 ## License
 

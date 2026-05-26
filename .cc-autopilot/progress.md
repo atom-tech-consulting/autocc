@@ -53,3 +53,9 @@
 - **Summary:** Re-homed Codex hook install to config-layer ([[hooks.*]] in ${CODEX_HOME}/config.toml, marker-bounded + idempotent), kept the plugin manifest/skills/hooks.json untouched per upstream openai/codex#16430, documented the dispatcher-gap + trust-persistence (state.trusted_hash inline) findings in docs/codex-mapping.md §1a/§1c, retracted the prior "do NOT write config.toml [hooks]" recommendation in docs/codex-smoke-results.md with the (b) determination (non-interactive trust pre-seeding impractical on 0.132/0.133 without published hash inputs, and even bypassed trust doesn't unlock codex exec given the independent dispatcher gap), and pinned five new unit tests; pytest -q is 86 passed / 2 skipped.
 - **Files:** src/autocc/installer.py, tests/test_installer.py, docs/codex-mapping.md, docs/codex-smoke-results.md
 - **Tests:** pass
+
+## [2026-05-26] TB-11: Replace Codex e2e smoke with tmux-driven TUI test + document hook-trust prereq
+- **Commit:** `50c5d28`
+- **Summary:** Replaced the exec-based Codex smoke with a tmux-driven TUI smoke (tests/smoke/test_reflector_e2e_codex_tui.py) that exercises the validated codex 0.132 hook path with three operator-friendly skip gates (AUTOCC_REAL_SDK, tmux, config-layer install + persisted trusted_hash); documented the one-time autocc install + /hooks trust ritual in README.md and tests/smoke/README.md; appended a "Live TUI validation (codex 0.132)" section to docs/codex-smoke-results.md closing Done-when #5 for the TUI path. uv run pytest -q → 86 passed, 2 skipped (both opt-in smokes).
+- **Files:** README.md, docs/codex-smoke-results.md, tests/smoke/README.md, tests/smoke/test_reflector_e2e_codex.py, tests/smoke/test_reflector_e2e_codex_tui.py
+- **Tests:** pass

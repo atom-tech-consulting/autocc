@@ -594,3 +594,95 @@ inline in `config.toml` and subsequent `codex exec` runs honor it
   so a future codex release that closes the dispatcher gap will
   fire the autocc hook directly, with a single TUI trust step on
   first run.
+
+## Live TUI validation (codex 0.132)
+
+TB-11 unblocked the milestone's Done-when #5 by switching the
+opt-in real-SDK Codex smoke from the (impossible on 0.132 / 0.133)
+`codex exec` path to the **interactive TUI** path, which does fire
+hooks once the operator has trusted them via `/hooks`. The new
+smoke lives at `tests/smoke/test_reflector_e2e_codex_tui.py` and
+exercises the same install + trust state an operator's day-to-day
+codex session uses, driven through a `tmux` pane so the TUI is
+scriptable while still having a real TTY.
+
+### What works on 0.132 (the autopilot loop, end-to-end)
+
+Validated against `codex-cli 0.132.0` on macOS arm64 with the
+operator's ChatGPT Pro account:
+
+1. **Install:** `autocc install --agent codex` writes a
+   marker-bounded `[hooks]` block into `~/.codex/config.toml`
+   pointing at the installed `autocc-hooks-codex.py`. The plugin
+   manifest / skills tree / `marketplace.json` land in their usual
+   places but the **config-layer hook block is what actually fires
+   on 0.132**; plugin-bundled `hooks.json` is silently dropped per
+   upstream openai/codex#16430 and is kept for forward compatibility.
+2. **Trust:** Launch `codex` interactively, run the `/hooks` slash
+   command, and trust each of the three autocc entries (`PreToolUse`,
+   `PermissionRequest`, `Stop`). Codex persists the trust state
+   inline in `config.toml`:
+
+   ```toml
+   [hooks.state."/Users/<you>/.codex/config.toml:stop:0:0"]
+   trusted_hash = "sha256:<hex>"
+   ```
+
+   This is the one-time human-gated step. There is no
+   non-interactive equivalent on 0.132 / 0.133 — the hash inputs
+   and `--dangerously-bypass-hook-trust` paths investigated under
+   TB-9 / TB-10 do not unlock the dispatcher.
+3. **Live run, observed:** With `.autocc/flag` set in a workspace
+   whose `TASKS.md` is an empty 5-section board, a single trivial
+   prompt to the codex TUI ("Say the word hello and stop.") causes
+   the autocc Stop hook to fire on codex's natural stop event,
+   resolve to "board empty," drop the flag, and append this audit
+   row to `<workspace>/.autocc/decisions.log`:
+
+   ```
+   [YYYY-MM-DD HH:MM:SS] Stop -> stop | board empty; flag dropped
+   ```
+
+   That's the universal "hook fired" evidence — same row the smoke's
+   mandatory assertion grep's for. Under `--dangerously-bypass-
+   approvals-and-sandbox` codex never issues `PermissionRequest`,
+   so `Stop` is the right gate for the smoke.
+
+### How the new smoke validates this
+
+`tests/smoke/test_reflector_e2e_codex_tui.py`:
+
+- Three operator-friendly skip gates: `AUTOCC_REAL_SDK=1` opt-in,
+  `shutil.which("tmux")` present, and the operator's
+  `~/.codex/config.toml` carrying both the autocc marker block AND
+  at least one persisted `trusted_hash` under `[hooks.state."...:stop:0:0"]`.
+  Each skip message names the precise next command to run.
+- Drives codex via
+  `tmux new-session -d -s autocc-smoke-tui -x 200 -y 50 "cd <workspace> && codex"`,
+  waits for the `/help` hint in the banner, optionally skips the
+  update-available prompt, sends the prompt body via
+  `tmux send-keys -l` followed by a single `Enter` (codex 0.132's
+  submit key; Ctrl+J inserts a newline instead), polls
+  `.autocc/decisions.log` for up to ~60s, and asserts the
+  `Stop -> stop` substring appears.
+- Writes ONLY into pytest's `tmp_path`, plus an optional
+  marker-bounded `[projects."<tmp_path>"]` trust block in
+  `~/.codex/config.toml` that the fixture strips on teardown.
+  No mutation of the `[hooks]` block, no plugin install, no
+  other persistent real-config changes.
+- Cleans up on teardown: Ctrl+C × 2 to trigger codex's quit-confirm,
+  then `tmux kill-session` regardless of outcome.
+
+### Disposition
+
+Done-when #5 is **closed for the interactive TUI path** as of
+TB-11: the autocc Stop hook demonstrably fires on real codex 0.132
+and writes its audit entry to disk, and the new smoke locks that
+expectation in so future regressions surface immediately. The
+preceding "exec-blocked" analysis (codex 0.132 / 0.133, plugin
+manifest parser gap, hook dispatcher gap under `codex exec`)
+remains accurate as a separate, upstream-tracked condition —
+`codex exec` is still unable to fire hooks on these releases and
+that's why the old `tests/smoke/test_reflector_e2e_codex.py`
+(exec-based) was removed: it encoded a known-impossible
+expectation that every honest run would fail.

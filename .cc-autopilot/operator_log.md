@@ -20,3 +20,4 @@ ideation won't re-propose decisions logged here._
 - 2026-05-21T23:08:28Z — applied operator-queued unfreeze → TB-9
 - 2026-05-22T05:27:00Z — applied operator-queued add_backlog → TB-10
 - 2026-05-26T05:30:59Z — applied operator-queued add_backlog → TB-11
+- 2026-05-26T06:19:02Z — applied operator-queued delete → TB-9
