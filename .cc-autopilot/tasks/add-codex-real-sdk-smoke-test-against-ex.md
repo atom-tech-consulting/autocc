@@ -110,10 +110,6 @@ when the environment cooperates.
 
 - `uv run pytest -q` — full suite passes (regression
   gate); the new smoke is skipped by default.
-- `bash -c 'AUTOCC_REAL_SDK=1 uv run pytest -q
-  tests/smoke/test_reflector_e2e_codex.py'` — the new
-  smoke runs and passes when the env var is set and a
-  logged-in codex CLI is available.
 - `test -f tests/smoke/test_reflector_e2e_codex.py` —
   file landed at the expected path.
 - `grep -q "AUTOCC_REAL_SDK" tests/smoke/test_reflector_e2e_codex.py`
@@ -132,7 +128,7 @@ when the environment cooperates.
   `docs/codex-mapping.md`'s predictions (judge confirms
   via Read).
 
-## Out of scope
+## Out of scope (incl. AUTOCC_REAL_SDK live-codex smoke — operator-triggered, see bullets below)
 
 - Rewriting README/ARCHITECTURE to add a full Codex
   install walkthrough — goal.md Done-when #4 is a
@@ -153,6 +149,14 @@ when the environment cooperates.
   surface — out of scope for the smoke (the install
   path doesn't use it); a separate task can probe it
   via `codex` source/runtime if/when needed.
+- Running the live-codex smoke as a gating daemon
+  check — the smoke is operator-triggered with
+  `AUTOCC_REAL_SDK=1 uv run pytest -q tests/smoke/test_reflector_e2e_codex.py`
+  (requires a logged-in `codex` CLI), matching the
+  "smokes are operator-triggered by design (real $$
+  cost)" note above; the daemon's per-task verifier
+  cannot observe a live operator action so it must
+  not gate on this command.
 ## Attempts
 
 ### 2026-05-18 — verification_failed

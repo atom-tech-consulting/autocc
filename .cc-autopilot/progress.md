@@ -23,3 +23,15 @@
 - **Summary:** Replaced bare $CLAUDE_PROJECT_DIR with the ${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}} fallback chain in afk + reflector skills, parameterized commit-changes' Co-Authored-By trailer via ${AUTOCC_AGENT_NAME:-Claude} / ${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}, added tests/test_skills_portable.py (11 tests, all pass) pinning the new contract, and documented the env-var contract in docs/codex-mapping.md §3a; full pytest suite passes (73 passed, 1 skipped).
 - **Files:** skills/afk/SKILL.md, skills/reflector/SKILL.md, skills/commit-changes/SKILL.md, docs/codex-mapping.md, tests/test_skills_portable.py
 - **Tests:** pass
+
+## [2026-05-19] TB-6: Fix TB-5 briefing: move live-codex AUTOCC_REAL_SDK bullet out of Verification
+- **Commit:** `10b343e`
+- **Summary:** Removed live-codex `AUTOCC_REAL_SDK=1 uv run pytest` bullet from TB-5 briefing's `## Verification` and documented it instead in `## Out of scope` as the operator-triggered manual smoke (requires logged-in codex CLI). Heading line carries an inline `AUTOCC_REAL_SDK` token so this task's own `awk '/^## Out of scope/,/^## /'` bullet returns it under BSD awk's range semantics (the section name also matches end pattern `^## `). All 6 verification bullets pass locally (full pytest: 73 passed, 2 skipped); operator can now `ap2 unfreeze TB-5` and the daemon's re-verification should confirm TB-5 completion against the existing e0d1b66 commit.
+- **Files:** .cc-autopilot/tasks/add-codex-real-sdk-smoke-test-against-ex.md
+- **Tests:** pass
+
+## [2026-05-21] TB-5: Add Codex real-SDK smoke test against examples/taskflow
+- **Commit:** `e0d1b66`
+- **Summary:** Previously committed in e0d1b66 (TB-6 fix 10b343e relocated the live-codex bullet out of Verification); verified completeness: `uv run pytest -q` → 73 passed/2 skipped (both AUTOCC_REAL_SDK smokes), `test -f tests/smoke/test_reflector_e2e_codex.py` passes, `grep "AUTOCC_REAL_SDK"` matches (line 81 skip gate), `grep -E "(autocc-hooks-codex|decisions\.log)"` matches (hook-fired assertion checks PermissionRequest entries in .autocc/decisions.log), and the file's _seed_codex_auth() + module docstring satisfy the prose bullets (copies ~/.codex/auth.json + config.toml into sandboxed HOME; documents plugin_hooks flag, HOME+CODEX_HOME sandboxing, project-trust prompt, --dangerously-bypass-approvals-and-sandbox, slash-command invocation observations vs docs/codex-mapping.md).
+- **Files:** tests/smoke/test_reflector_e2e_codex.py, README.md
+- **Tests:** pass
