@@ -1,0 +1,15 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/decouple-afk-reflector-commit-changes-sk.md",
+  "focus_anchor": "current focus openai codex provider support",
+  "outcome": {
+    "commit": null,
+    "decision_actor": "operator",
+    "decision_kind": "approved",
+    "decision_ts": "2026-05-18T17:30:25Z",
+    "reason": ""
+  },
+  "proposed_at": "2026-05-17T08:07:37Z",
+  "tb_id": "TB-4",
+  "why_now": "even after the installer copies the six skill\nmarkdowns into `~/.codex/plugins/autocc/skills/`, a Codex\nsession loading them still cannot find the autopilot flag or\nthe task board because the skill bodies read the wrong env\nvar \u2014 the install path will appear to succeed and then the\nloop will fail on the first turn. Decoupling the env-var\ncontract is the last piece needed for an end-to-end Codex\nautopilot run."
+}

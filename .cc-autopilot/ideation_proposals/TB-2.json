@@ -1,0 +1,15 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/add-agent-codex-install-branch-to-autocc.md",
+  "focus_anchor": "autocc install agent codex wires the",
+  "outcome": {
+    "commit": null,
+    "decision_actor": "operator",
+    "decision_kind": "approved",
+    "decision_ts": "2026-05-18T17:30:25Z",
+    "reason": ""
+  },
+  "proposed_at": "2026-05-17T08:06:15Z",
+  "tb_id": "TB-2",
+  "why_now": "the installer's hard-coded Claude paths block every\nother Codex-provider workstream (the real hook script needs a\ndefined plugin-root path to write into; skill-glue work needs\na settled install layout to test against; README/ARCHITECTURE\nupdates need a real install command to document). Landing the\nscaffolding here is the smallest unblocking step."
+}

@@ -1,0 +1,15 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/write-codex-side-autocc-hook-script-with.md",
+  "focus_anchor": "autocc install agent codex wires the",
+  "outcome": {
+    "commit": null,
+    "decision_actor": "operator",
+    "decision_kind": "approved",
+    "decision_ts": "2026-05-18T17:30:25Z",
+    "reason": ""
+  },
+  "proposed_at": "2026-05-17T08:06:54Z",
+  "tb_id": "TB-3",
+  "why_now": "without a Codex-shaped hook script, the Codex install\nbranch ships a non-functional plugin \u2014 the model can load\nskills but the autopilot loop dies the first time Codex asks\nfor permission or the model tries to stop, because Claude-shape\nJSON triggers `PermissionRequest hook returned unsupported \u2026`.\nClosing this gap is the smallest step that gets a Codex\nsession through one unattended task."
+}
