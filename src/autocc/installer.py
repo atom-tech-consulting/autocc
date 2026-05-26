@@ -5,11 +5,11 @@ The installer has two provider branches:
 - ``claude`` (default) — writes ``~/.claude/{skills,hooks}/`` and patches
   ``~/.claude/settings.json``. Honors ``CLAUDE_HOME``.
 - ``codex`` — writes a plugin folder at ``${AUTOCC_CODEX_PLUGIN_ROOT:-~/plugins}/autocc/``
-  (``.codex-plugin/plugin.json`` + ``skills/`` + ``hooks.json`` + a stub hook
-  script) and adds a ``source.path: ./plugins/autocc`` entry to
-  ``~/.agents/plugins/marketplace.json`` so Codex discovers the plugin via its
-  marketplace loader. The real Codex hook body is deferred to a follow-up; this
-  install ships a stub that exits 0 so the plugin loads cleanly.
+  (``.codex-plugin/plugin.json`` + ``skills/`` + ``hooks.json`` + the
+  Codex-shaped autopilot hook script ``autocc-hooks-codex.py``) and adds a
+  ``source.path: ./plugins/autocc`` entry to
+  ``~/.agents/plugins/marketplace.json`` so Codex discovers the plugin via
+  its marketplace loader.
 """
 
 from __future__ import annotations
@@ -38,7 +38,14 @@ VALID_AGENTS = ("claude", "codex")
 
 # --- Codex provider constants ----------------------------------------------
 CODEX_PLUGIN_NAME = "autocc"
-CODEX_HOOK_BASENAME = "autocc-hook.sh"
+# The Codex-shaped autopilot hook script, separate from the Claude script so
+# each provider's wire format stays legible. Lives in src/autocc/hooks/ and
+# is copied into the plugin's hooks/ subdir at install time. Per the
+# discovery doc (docs/codex-mapping.md §2a), the Codex binary parses
+# `permissionDecision: allow` (not Claude's
+# `hookSpecificOutput.decision.behavior: allow`), so the wire shape is
+# load-bearing — install must wire this script, not the Claude script.
+CODEX_HOOK_BASENAME = "autocc-hooks-codex.py"
 # Codex hook events autocc wires (CamelCase, as accepted by codex's
 # HookStateToml deserializer + plugin hooks.json `hooks` table). Per the
 # discovery doc (docs/codex-mapping.md §2a), only PreToolUse,
@@ -473,29 +480,18 @@ def _claude_status(*, claude_home: Path) -> int:
 # entry. The plugin folder shape (per ~/.codex/skills/.system/plugin-creator):
 #
 #   <plugin_root>/autocc/
-#     .codex-plugin/plugin.json    — manifest (name, version, skills, hooks)
-#     skills/<name>/SKILL.md       — copied from the shared payload
-#     hooks.json                   — registers PreToolUse / PermissionRequest /
-#                                    Stop, pointing at the stub script
-#     hooks/autocc-hook.sh         — stub that exits 0 (real body lands in a
-#                                    follow-up — TB-2 ships scaffolding only)
+#     .codex-plugin/plugin.json        — manifest (name, version, skills, hooks)
+#     skills/<name>/SKILL.md           — copied from the shared payload
+#     hooks.json                       — registers PreToolUse /
+#                                        PermissionRequest / Stop, pointing
+#                                        at the Codex hook script
+#     hooks/autocc-hooks-codex.py      — Codex-shaped autopilot hook script
+#                                        (TB-3 replaced the prior stub with
+#                                        the real implementation)
 #
 # The marketplace entry lives at ~/.agents/plugins/marketplace.json with
 # `source.path: ./plugins/autocc`, which Codex resolves to ~/plugins/autocc/
 # per the plugin-creator skill's documented convention.
-
-# Stub hook body. The real Codex hook script (mirroring autocc-hooks.py's
-# behavior under Codex's hook JSON contract) is intentionally deferred — see
-# docs/codex-mapping.md §2a for the per-event impedance notes. This stub
-# drains stdin and exits 0 so the plugin loads cleanly and the dispatcher
-# doesn't log a missing-command error.
-CODEX_HOOK_STUB = """\
-#!/usr/bin/env bash
-# autocc Codex hook stub. The real body lands in a follow-up task.
-# Drains hook input JSON from stdin and exits 0 so the dispatcher is happy.
-cat > /dev/null
-exit 0
-"""
 
 
 def _codex_plugin_manifest(plugin_name: str, version: str) -> dict:
@@ -525,17 +521,32 @@ def _codex_hooks_json(hook_script_relpath: str) -> dict:
     / `CLAUDE_PLUGIN_ROOT` env vars when invoking hook commands, but
     relative paths are also resolved against the plugin root by the
     dispatcher.
+
+    The hook script is invoked with ``python3 ...`` rather than relying on
+    the shebang so the plugin loads cleanly on systems where ``python3``
+    isn't on ``PATH`` for shebang resolution (e.g. some homebrew setups
+    where the script's mode bit is dropped on copy).
     """
+    cmd = f"python3 {hook_script_relpath}"
+
     def entry(event: str) -> dict:
         return {
             "hooks": [
-                {"type": "command", "command": f"{hook_script_relpath} {event}"},
+                {"type": "command", "command": f"{cmd} {event}"},
             ],
         }
 
-    return {
-        "hooks": {event: [entry(event)] for event in CODEX_HOOK_EVENTS},
-    }
+    # Mirror the Claude install's PreToolUse matcher — the AskUserQuestion /
+    # EnterPlanMode tools don't exist on Codex, so this matcher never fires
+    # in practice, but pinning the matcher documents intent and avoids
+    # invoking the hook on every Bash/Edit/Write call.
+    hooks: dict = {}
+    for event in CODEX_HOOK_EVENTS:
+        if event == "PreToolUse":
+            hooks[event] = [{**entry(event), "matcher": "AskUserQuestion|EnterPlanMode"}]
+        else:
+            hooks[event] = [entry(event)]
+    return {"hooks": hooks}
 
 
 def _codex_marketplace_entry(plugin_name: str) -> dict:
@@ -608,9 +619,16 @@ def _codex_install(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) 
 
     Returns process exit code.
     """
-    skills_src, _hooks_src = _payload_paths()
+    skills_src, hooks_src = _payload_paths()
     if not skills_src.is_dir():
         print(f"error: skill payloads missing at {skills_src}", file=sys.stderr)
+        return 2
+    hook_src_path = hooks_src / CODEX_HOOK_BASENAME
+    if not hook_src_path.is_file():
+        print(
+            f"error: Codex hook script missing at {hook_src_path}",
+            file=sys.stderr,
+        )
         return 2
 
     plugin_dir = plugin_root / CODEX_PLUGIN_NAME
@@ -644,15 +662,14 @@ def _codex_install(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) 
             print(f"  installed skill: {dest}")
         skill_count += 1
 
-    # 3. Stub hook script + hooks.json registration
+    # 3. Codex-shaped hook script + hooks.json registration
     hook_script_path = plugin_dir / "hooks" / CODEX_HOOK_BASENAME
     if dry_run:
-        print(f"  [dry-run] would write hook stub: {hook_script_path}")
+        print(f"  [dry-run] would install hook script: {hook_script_path}")
     else:
         hook_script_path.parent.mkdir(parents=True, exist_ok=True)
-        hook_script_path.write_text(CODEX_HOOK_STUB)
-        hook_script_path.chmod(0o755)
-        print(f"  wrote hook stub: {hook_script_path}")
+        _copy_file(hook_src_path, hook_script_path, executable=True)
+        print(f"  installed hook script: {hook_script_path}")
 
     hooks_json_path = plugin_dir / "hooks.json"
     hooks_payload = _codex_hooks_json(f"./hooks/{CODEX_HOOK_BASENAME}")
@@ -691,8 +708,6 @@ def _codex_install(*, dry_run: bool, plugin_root: Path, marketplace_path: Path) 
     print(f"Done. {skill_count} skills, {len(CODEX_HOOK_EVENTS)} hook event(s), 1 plugin.")
     print()
     print("Next: start codex; the plugin loads via the marketplace entry.")
-    print("Note: the hook script is currently a stub — a follow-up task ships")
-    print("the real autopilot hook body.")
     return 0
 
 

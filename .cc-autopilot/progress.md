@@ -11,3 +11,9 @@
 - **Summary:** Added `--agent {claude,codex}` flag to install/uninstall/status; Codex branch writes a plugin folder at ${AUTOCC_CODEX_PLUGIN_ROOT:-~/plugins}/autocc/ with .codex-plugin/plugin.json, all six skills, hooks.json (PreToolUse/PermissionRequest/Stop) plus a stub hook script, and registers it via ~/.agents/plugins/marketplace.json. 17/17 installer tests pass (9 new codex cases); full suite 38 passed, 1 skipped.
 - **Files:** src/autocc/cli.py, src/autocc/installer.py, tests/test_installer.py
 - **Tests:** pass
+
+## [2026-05-18] TB-3: Write Codex-side autocc hook script with Codex JSON wire shapes
+- **Commit:** `1818a0e`
+- **Summary:** Added autocc-hooks-codex.py emitting Codex's permissionDecision/stop wire shapes (with defensive no-ops for elicitation / post_compact / pre_tool_use), rewired installer Codex branch to copy the real script in place of the stub, and added 24 subprocess-driven tests covering all event paths + PLUGIN_ROOT/CLAUDE_PLUGIN_ROOT env-var fallbacks; full suite 62 passed / 1 skipped.
+- **Files:** src/autocc/hooks/autocc-hooks-codex.py, src/autocc/installer.py, tests/test_autocc_hook_codex.py
+- **Tests:** pass
