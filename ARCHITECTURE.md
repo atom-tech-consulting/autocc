@@ -3,10 +3,12 @@
 `autocc` is three things glued together:
 
 1. **A flag file** (`.autocc/flag`) — the on/off switch
-2. **A hook script** (`autocc-hooks.py`) — the actual mechanism that changes Claude's behavior when the flag is set
+2. **A hook script** (`autocc-hooks.py` on Claude Code, `autocc-hooks-codex.py` on Codex) — the actual mechanism that changes the agent's behavior when the flag is set
 3. **A set of skills** (`/afk`, `/reflector`, `/taskboard`, …) — the work loop and task-board protocol the agent follows
 
-Plus a statusline shell script, which is load-bearing for one specific reason (see below).
+Plus a statusline shell script (Claude Code only), which is load-bearing for one specific reason (see below).
+
+autocc targets two coding-agent CLIs — Claude Code (default) and OpenAI Codex (via `autocc install --agent codex`). The two providers share the same flag, the same skills, and the same per-project `.autocc/` state model; they diverge only in (a) the hook script's JSON wire shapes, (b) the on-disk install layout, and (c) two events that have no Codex analog. See **[Provider branches](#provider-branches)** below for the full breakdown, and `docs/codex-mapping.md` for the event-by-event mapping that grounds it.
 
 ## The flag
 
@@ -95,6 +97,49 @@ The hook reads `CLAUDE_PROJECT_DIR` from the environment, falling back to `cwd` 
 
 Run with `pytest tests/test_autocc_hook.py -v`. No API cost.
 
+### Provider branches
+
+The hook's behavior is identical between providers — gate on the flag; deny interactive prompts; auto-allow permission requests; block premature Stop — but the wire formats and the install layout differ. `docs/codex-mapping.md` is the source of truth for the full event-by-event mapping; the summary here is just what's needed to understand the two scripts side-by-side.
+
+**Two hook scripts, one per provider:**
+
+- `autocc-hooks.py` is the Claude Code hook. Installed by `autocc install` (default) into `~/.claude/hooks/autocc-hooks.py` and registered in `~/.claude/settings.json` against five hook events (`PreToolUse`, `PermissionRequest`, `Stop`, `Elicitation`, `PostCompact`). Emits Claude Code's `hookSpecificOutput.decision.behavior` JSON shape for permission auto-approval and the `{"decision": "block", "reason": "..."}` shape for Stop continuation.
+- `autocc-hooks-codex.py` is the Codex hook. Installed by `autocc install --agent codex` into `${AUTOCC_CODEX_PLUGIN_ROOT:-~/plugins}/autocc/hooks/autocc-hooks-codex.py` and registered in the plugin's `hooks.json` against the three Codex hook events autocc actually uses (`PreToolUse`, `PermissionRequest`, `Stop`). Emits Codex's `{"permissionDecision": "allow", "permissionDecisionReason": "AUTOPILOT: ..."}` JSON shape for permission auto-approval — the Codex binary literally rejects unsupported variants by string match, so the shape is load-bearing — and a `decision: "block"` + non-empty `reason` for Stop continuation (Codex rejects `decision:block` without a non-empty reason, also a string-match check).
+
+The two scripts are kept as separate files (not a shared module) so each provider's wire format stays legible in one place; per `goal.md`, a generic plugin SDK that would let a third provider tap in is explicitly out of scope.
+
+**Codex install layout — peer of the Claude `~/.claude/settings.json` patch.** Codex discovers plugins via marketplaces rather than by scanning a single config dir, so the Codex branch installs as a self-contained **plugin folder** plus a single **marketplace entry**:
+
+```
+${AUTOCC_CODEX_PLUGIN_ROOT:-~/plugins}/autocc/
+├── .codex-plugin/plugin.json        # manifest (name, version, skills path, hooks path)
+├── skills/<name>/SKILL.md           # same skill payload as the Claude install
+├── hooks.json                       # registers PreToolUse / PermissionRequest / Stop,
+│                                    # plus an env block setting AUTOCC_AGENT_NAME=Codex
+│                                    # and AUTOCC_AGENT_EMAIL=noreply@openai.com
+└── hooks/autocc-hooks-codex.py      # the Codex-shaped hook script described above
+
+~/.agents/plugins/marketplace.json   # one plugins[] entry with source.path: ./plugins/autocc
+                                     # — Codex resolves this against the marketplace's home
+                                     # anchor, so it maps to ~/plugins/autocc/
+```
+
+`AUTOCC_CODEX_PLUGIN_ROOT` overrides the parent directory if you don't want the plugin under `~/plugins/`. Uninstall reduces to deleting the plugin folder and stripping autocc's `plugins[]` entry from the marketplace.
+
+**Skill env-var contract — the same six skills run under both providers.** TB-4 decoupled the skill bodies from Claude-only env vars so the markdown is provider-neutral; the installer's Codex branch wires the matching vars via the plugin's `hooks.json` `env` block:
+
+- `${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}` — the resolution chain the `afk` and `reflector` skills use to locate the session root (the directory holding `.autocc/flag`, `CLAUDE.md`, `TASKS.md`). `AUTOCC_PROJECT_DIR` is the portable override (operator-set only); the rest of the chain picks up whichever provider's native var is in scope and falls back to `$PWD`. A future third provider can opt in by exporting `AUTOCC_PROJECT_DIR` — no skill edit needed.
+- `${AUTOCC_AGENT_NAME:-Claude}` / `${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}` — the `commit-changes` skill interpolates these into the `Co-Authored-By` trailer it writes on every commit. The autocc Codex plugin's `hooks.json` `env` block sets them to `Codex` / `noreply@openai.com` so commits made under Codex are attributed correctly. Unset preserves the historical Claude-side trailer.
+
+**Document-and-skip gaps under Codex.** Two of autocc's Claude-side hook events have no Codex hook-event analog at codex-cli 0.128.0, and one of its load-bearing side mechanisms (the statusline shell-out) has no Codex equivalent. These are accepted as documented limitations per `goal.md`'s non-goal on cross-provider parity:
+
+- **PreToolUse(`AskUserQuestion`) / PreToolUse(`EnterPlanMode`)** — accept-as-limitation. Codex doesn't ship those tools, so the matcher `pre_tool_use` registration is harmless but never fires. Enforce the "don't ask" constraint via the autopilot skill prompt and Codex's `-a/--ask-for-approval=never` startup policy instead.
+- **Elicitation hook** — accept-as-limitation, polyfill candidate. Codex emits `elicitation_request` Events but has no `Elicitation` hook event for autocc to auto-deny. A polyfill via an MCP server proxying `elicit/create` is plausible but deferred.
+- **PostCompact hook** — accept-as-limitation, polyfill candidate. Codex auto-compacts (`context_compacted` Event fires) but exposes no `PostCompact` hook, so the Claude-side "re-inject latest checkpoint as `additionalContext`" mechanism has no place to attach. A polyfill via a `user_prompt_submit` hook conditioned on a recent compaction is plausible but deferred.
+- **Statusline shell-out** — document-and-skip. Codex's `status_line` TUI config is a widget list, not a shell-command hook — there's no analog to Claude Code's `statusLine.command`. The statusline-written `.autocc/context.json` simply doesn't exist on Codex, so the reflector's 70%-context CHECKPOINT branch no-ops; the reflector still checkpoints on task completion, just not on a context-usage threshold.
+
+See `docs/codex-mapping.md` §4 for the full gap list with one-line rationales.
+
 ## The statusline (yes, it's load-bearing)
 
 `~/.claude/statusline-command.sh` is registered as Claude Code's `statusLine` command. Its primary side effect: it writes the full statusline JSON input to `<project_dir>/.autocc/context.json` every time it's called.
@@ -102,6 +147,8 @@ Run with `pytest tests/test_autocc_hook.py -v`. No API cost.
 That JSON contains `context_window.used_percentage`. The reflector reads it during the CHECKPOINT step to decide whether to snapshot. Without this file, the 70% checkpoint trigger doesn't fire, and PostCompact recovery degrades to "resume blind."
 
 (The statusline is also a normal statusline — shows user/host/cwd/git-branch/model/context% — but the side effect is what's actually critical for autocc.)
+
+**Codex has no analog.** Codex's `status_line` TUI config is a widget list rendered by the TUI itself, not a shell-command hook — there's no equivalent to Claude Code's `statusLine.command`. Under Codex, `.autocc/context.json` is never written and the reflector's 70%-context CHECKPOINT branch no-ops; the reflector falls back to checkpointing on task completion. This is the **statusline shell-out** gap in `docs/codex-mapping.md` §4.
 
 ## The skills
 
@@ -131,7 +178,7 @@ That JSON contains `context_window.used_percentage`. The reflector reads it duri
     └─────┘  GO TO DISCOVER
 ```
 
-Skills are markdown files (with YAML frontmatter) loaded into the Claude Code session. They describe the loop to the agent in natural language. There's no Python execution path through them — they're prompts.
+Skills are markdown files (with YAML frontmatter) loaded into the agent session — Claude Code via `~/.claude/skills/<name>/SKILL.md`, Codex via the plugin's `skills/<name>/SKILL.md` discovered through the marketplace entry. The payload is identical across providers; the skill bodies route around provider-specific env vars via the `${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}` resolution chain (see [Provider branches](#provider-branches)). They describe the loop to the agent in natural language. There's no Python execution path through them — they're prompts.
 
 ## The task board
 
@@ -157,17 +204,23 @@ project/
     ├── flag                        — empty file, presence = autopilot on
     ├── decisions.log               — appended by the hook for every suppressed prompt
     ├── progress.md                 — narrative log, appended by reflector per task
-    ├── context.json                — written by statusline; read by reflector for checkpoint trigger
+    ├── context.json                — Claude only: written by statusline; read by reflector
+    │                                 for checkpoint trigger. Codex has no analog.
     ├── tasks/<slug>.md             — briefings; one per TB-N
-    ├── checkpoints/<ts>.md         — written by reflector at 70% context; read by PostCompact
+    ├── checkpoints/<ts>.md         — written by reflector at 70% context (Claude) or on task
+    │                                 completion (Codex); read by PostCompact on Claude
     └── metrics/<ts>.json           — per-session summary written before idle stop
 ```
 
 `flag` and `context.json` are runtime-only — gitignore them. `tasks/`, `progress.md`, `decisions.log`, and the metrics dir typically *are* committed; they're the audit trail.
 
+The agent-side install layout differs by provider — see [Provider branches](#provider-branches) for the Codex plugin folder + marketplace-entry shape vs. the Claude `~/.claude/{skills,hooks}/` + `settings.json` shape.
+
 ## What's deliberately not here (v1)
 
-- **No daemon.** Everything happens inside the Claude Code session. The closest thing to a "background process" is the agent looping on itself, gated by the Stop hook.
-- **No parallel workers.** v1 is single-threaded. Future versions may add an orchestrator pattern for dispatching tasks to background sessions.
+- **No daemon.** Everything happens inside the agent session (Claude Code or Codex). The closest thing to a "background process" is the agent looping on itself, gated by the Stop hook.
+- **No parallel workers.** v1 is single-threaded under both providers. Future versions may add an orchestrator pattern for dispatching tasks to background sessions.
 - **No remote state.** All state is local to the project's `.autocc/` directory. No network, no auth, no central server.
-- **No model-specific code.** autocc works with whatever model your Claude Code session is configured to use.
+- **No model-specific code.** autocc works with whatever model your Claude Code / Codex session is configured to use.
+- **No generic provider plugin SDK.** Codex is the second concrete provider, not the start of an ecosystem — the two hook scripts are intentionally separate files rather than a shared module with a plugin interface (per `goal.md`'s non-goal).
+- **No Codex-side polyfills for the `Elicitation` / `PostCompact` gaps.** These are accepted as documented limitations; see [Provider branches](#provider-branches) and `docs/codex-mapping.md` §4.

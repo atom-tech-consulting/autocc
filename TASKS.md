@@ -8,8 +8,8 @@
 
 ## Backlog
 
-- [ ] **TB-7** **Document the Codex install path in README and ARCHITECTURE** `#codex` `#docs` — Add Codex install + hook documentation to README and ARCHITECTURE alongside the existing Claude Code coverage, closing goal.md Done-when bullet #4. [→ brief](.cc-autopilot/tasks/document-the-codex-install-path-in-readm.md)
 - [ ] **TB-8** **Make commit-changes' trailer identity default to "Codex" under the Codex install** `#codex` `#skills` `#commit-changes` — Have the Codex installer export AUTOCC_AGENT_NAME=Codex / AUTOCC_AGENT_EMAIL=noreply@openai.com (or document the user-set override) so commit-changes' Co-Authored-By trailer reads "Codex" under the Codex install path rather than the Claude default. [→ brief](.cc-autopilot/tasks/make-commit-changes-trailer-identity-def.md)
+- [ ] **TB-7** **Document the Codex install path in README and ARCHITECTURE** `#codex` `#docs` — Add Codex install + hook documentation to README and ARCHITECTURE alongside the existing Claude Code coverage, closing goal.md Done-when bullet #4. [→ brief](.cc-autopilot/tasks/document-the-codex-install-path-in-readm.md)
 
 ## Pipeline Pending
 

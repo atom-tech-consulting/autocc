@@ -114,3 +114,10 @@ provider-equivalence details).
 - Editing the briefings of prior Codex tasks to add cross-references.
 - Documenting Elicitation / PostCompact polyfills — only mention them as "accepted-limitation" gaps citing `docs/codex-mapping.md`.
 - Adding a CI workflow that lints the README for provider-symmetry — out of scope; manual review is sufficient.
+## Attempts
+
+### 2026-05-21 — verification_failed
+(no summary)
+- **kind:** per_task
+- **failed_criteria:** [fail] `awk '/^# /{n++} END{exit !(n==1)}' README.md` — README still has exactly one top-level heading (sanity check the edit d
+- **Debug dumps:** `prompt: .cc-autopilot/debug/20260521T000608Z-TB-7.prompt.md`, `stream: .cc-autopilot/debug/20260521T000608Z-TB-7.stream.jsonl`, `messages: .cc-autopilot/debug/20260521T000608Z-TB-7.messages.jsonl`
