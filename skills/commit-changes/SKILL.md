@@ -63,14 +63,17 @@ git add <changed files> TASKS.md .autocc/progress.md
 
 Commit using heredoc syntax. The `Co-Authored-By` trailer is
 parameterized by two env vars so the same skill works under both
-Claude Code and Codex (defaults preserve the Claude-side behavior
-when neither var is set; the autocc Codex plugin's `hooks.json` `env`
-block sets them to `Codex` / `noreply@openai.com`):
+Claude Code and Codex. When neither env var is set, the default is
+chosen by sniffing `$CODEX_PROJECT_DIR` — if set, the trailer reads
+`Codex <noreply@openai.com>`; otherwise it falls back to the
+historical `Claude <noreply@anthropic.com>`. An explicit
+`AUTOCC_AGENT_NAME` / `AUTOCC_AGENT_EMAIL` always wins over both
+defaults:
 
-| Env var | Default |
-|---|---|
-| `AUTOCC_AGENT_NAME` | `Claude` |
-| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` |
+| Env var | Default (Claude session) | Default (Codex session) |
+|---|---|---|
+| `AUTOCC_AGENT_NAME` | `Claude` | `Codex` |
+| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` | `noreply@openai.com` |
 
 Because the trailer needs shell variable expansion, the heredoc here
 is **unquoted** (`<<EOF`, not `<<'EOF'`). If your commit body
@@ -82,7 +85,7 @@ git commit -m "$(cat <<EOF
 
 - <bullet point for each logical change>
 
-Co-Authored-By: ${AUTOCC_AGENT_NAME:-Claude} <${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}>
+Co-Authored-By: ${AUTOCC_AGENT_NAME:-$([ -n "$CODEX_PROJECT_DIR" ] && echo Codex || echo Claude)} <${AUTOCC_AGENT_EMAIL:-$([ -n "$CODEX_PROJECT_DIR" ] && echo noreply@openai.com || echo noreply@anthropic.com)}>
 EOF
 )"
 ```
@@ -105,4 +108,4 @@ Tell the user:
 - **Always update both TASKS.md and progress.md.** Even if changes are minor, the audit trail matters.
 - **Never commit secrets.** Skip `.env`, credentials, tokens. Warn the user if they're in the diff.
 - **Do not push.** Reflector/autopilot work is local-only by convention. The human decides when to push.
-- **Co-author trailer is mandatory.** Always include it, and always use the parameterized `${AUTOCC_AGENT_NAME:-Claude} <${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}>` form so the trailer reflects the provider running the session.
+- **Co-author trailer is mandatory.** Always include it, and always use the parameterized `${AUTOCC_AGENT_NAME:-...} <${AUTOCC_AGENT_EMAIL:-...}>` form shown in step 4 (with the `$CODEX_PROJECT_DIR` sniff inside the `:-` defaults), so the trailer reflects the provider running the session.

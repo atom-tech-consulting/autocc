@@ -219,7 +219,7 @@ Each of autocc's six skills, against Codex's skill loader behavior:
 | `taskboard` | Reads/writes `TASKS.md`; reads `CLAUDE.md` `## Autopilot` paths; references `.autocc/tasks/`, `.autocc/progress.md`. No env-var dependence. | **portable-as-is** | None. Codex reads `CLAUDE.md` (and `AGENTS.md`) natively. The skill body's `aliases:` frontmatter key is not in the codex skill-creator spec; codex skill loaders appear to ignore unknown keys, but if a future codex version validates frontmatter strictly the `aliases:` line would need to move into `metadata:`. |
 | `tb` | Pure alias for `/taskboard` (one body line). | **portable-as-is** | None. The alias mechanism in autocc is just a separately-installed skill that re-invokes `/taskboard`; codex handles that fine. |
 | `housekeeping` | Detects project tooling via `pyproject.toml` / `package.json` / `Makefile` / `Cargo.toml` etc. and runs the project's linter/tests. No Claude-specific surface. | **portable-as-is** | None. |
-| `commit-changes` | Pure prompt; reads `TASKS.md` + `.autocc/progress.md`; writes git commits with a `Co-Authored-By: Claude <noreply@anthropic.com>` trailer. | **needs-provider-specific-glue** | The hardcoded `Co-Authored-By: Claude <noreply@anthropic.com>` trailer is wrong under Codex — should be `Co-Authored-By: Codex <noreply@openai.com>` or parameterized by the active provider. Otherwise the skill is pure markdown protocol. |
+| `commit-changes` | Pure prompt; reads `TASKS.md` + `.autocc/progress.md`; writes git commits with a `Co-Authored-By: Claude <noreply@anthropic.com>` trailer. | **needs-provider-specific-glue** | The hardcoded `Co-Authored-By: Claude <noreply@anthropic.com>` trailer is wrong under Codex — should be `Co-Authored-By: Codex <noreply@openai.com>` or parameterized by the active provider. Otherwise the skill is pure markdown protocol. TB-4 parameterized the trailer on `AUTOCC_AGENT_NAME` / `AUTOCC_AGENT_EMAIL`; TB-8 then made the default-when-unset provider-aware via a `$CODEX_PROJECT_DIR` sniff inside the `:-` branches so Codex sessions don't need any explicit env wiring to get the right trailer. |
 
 No skill in autocc is classified `no-codex-analog` — every one of them
 can run under Codex, three of them as-is and three with cosmetic /
@@ -237,14 +237,23 @@ match):
 | `AUTOCC_PROJECT_DIR` | _(unset)_ | `afk`, `reflector` — resolved via the chain `${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}` to locate the session root (`.autocc/flag`, `CLAUDE.md`, `TASKS.md`, etc.) | Operator override only — the skills walk to `CLAUDE_PROJECT_DIR` then `CODEX_PROJECT_DIR` then `$PWD` automatically. Sets this when the operator wants to pin a non-default project root regardless of which harness is running. |
 | `CLAUDE_PROJECT_DIR` | _(unset)_ | Same as above; second in the chain | Claude Code CLI sets this for every session. |
 | `CODEX_PROJECT_DIR` | _(unset)_ | Same as above; third in the chain | Codex CLI (when present); the autocc Codex plugin's `hooks.json` `env` block can also set it explicitly for environments where Codex doesn't export it natively. |
-| `AUTOCC_AGENT_NAME` | `Claude` | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_NAME:-Claude}` | The autocc Codex plugin (`~/plugins/autocc/hooks.json` `env` block) sets it to `Codex` so commits made under Codex are attributed correctly. Unset = preserve historical Claude-side trailer. |
-| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}` | The autocc Codex plugin sets it to `noreply@openai.com`. Unset = preserve historical Claude-side trailer. |
+| `AUTOCC_AGENT_NAME` | `Claude` (Claude session) / `Codex` (Codex session) | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_NAME:-$([ -n "$CODEX_PROJECT_DIR" ] && echo Codex || echo Claude)}` | Operator override only. When unset, the trailer sniffs `$CODEX_PROJECT_DIR` and picks `Codex` if it is set, `Claude` otherwise — see TB-8. The Codex CLI exports `CODEX_PROJECT_DIR` natively, so no installer-side env wiring is required. |
+| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` (Claude session) / `noreply@openai.com` (Codex session) | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_EMAIL:-$([ -n "$CODEX_PROJECT_DIR" ] && echo noreply@openai.com || echo noreply@anthropic.com)}` | Same provider-sniff fallback as `AUTOCC_AGENT_NAME`, with the matching email for each provider. |
 
 The fallback chain's ordering — `AUTOCC_*` first, then each provider's
 native var, then `$PWD` — keeps the skill bodies provider-neutral
 without a runtime branch. A future third provider can opt in just by
 exporting `AUTOCC_PROJECT_DIR` (and, optionally, `AUTOCC_AGENT_NAME`
 / `AUTOCC_AGENT_EMAIL`) at session start; no skill edit needed.
+
+The `commit-changes` trailer defaults take the same shape, but with the
+sniff folded directly into the `${...:-default}` expansion rather than
+a multi-level chain — there are only two concrete providers (Claude
+and Codex), so a single `[ -n "$CODEX_PROJECT_DIR" ]` test suffices and
+avoids growing a generic provider-detection layer (Non-goal: "Generic
+provider plugin SDK"). The override surface is unchanged: operators
+who set `AUTOCC_AGENT_NAME` / `AUTOCC_AGENT_EMAIL` explicitly always
+win, under both providers.
 
 The reflector skill's `## 5 CHECKPOINT` branch still reads
 `.autocc/context.json`, which today is only written by the Claude Code

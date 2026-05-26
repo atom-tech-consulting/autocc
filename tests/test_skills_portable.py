@@ -133,17 +133,45 @@ def test_commit_changes_has_no_hardcoded_claude_trailer():
 def test_commit_changes_trailer_uses_fallback_default_form():
     """Spot-check that the parameterized trailer template is the form the
     skill instructs the agent to use (catches half-finished edits that drop
-    the default-value `:-...` syntax)."""
+    the default-value `:-...` syntax).
+
+    TB-8 made the default-when-unset provider-aware via a `$CODEX_PROJECT_DIR`
+    sniff inside the `:-` branches, so the test pins the surrounding
+    `${AUTOCC_AGENT_NAME:-...}` / `${AUTOCC_AGENT_EMAIL:-...}` shape and
+    checks both provider's literals appear as default candidates. The
+    actual end-to-end runtime behavior is exercised by
+    `tests/test_commit_changes_defaults.py`.
+    """
     body = COMMIT_CHANGES.read_text()
-    # Look for "${AUTOCC_AGENT_NAME:-Claude}" anywhere.
-    assert re.search(r"\$\{AUTOCC_AGENT_NAME:-Claude\}", body), (
-        "commit-changes trailer must default AUTOCC_AGENT_NAME to 'Claude' "
-        "so the Claude-side behavior is preserved when the env var is unset"
+    # The trailer expression must still have a `${AUTOCC_AGENT_NAME:-...}`
+    # default branch (not bare `$AUTOCC_AGENT_NAME`), so an unset env var
+    # falls through to a default rather than expanding to empty.
+    assert re.search(r"\$\{AUTOCC_AGENT_NAME:-", body), (
+        "commit-changes trailer must use the `${AUTOCC_AGENT_NAME:-<default>}` "
+        "form so an unset env var falls through to the provider-aware default"
     )
-    assert re.search(r"\$\{AUTOCC_AGENT_EMAIL:-noreply@anthropic\.com\}", body), (
-        "commit-changes trailer must default AUTOCC_AGENT_EMAIL to "
-        "'noreply@anthropic.com' so the Claude-side behavior is preserved "
-        "when the env var is unset"
+    assert re.search(r"\$\{AUTOCC_AGENT_EMAIL:-", body), (
+        "commit-changes trailer must use the `${AUTOCC_AGENT_EMAIL:-<default>}` "
+        "form so an unset env var falls through to the provider-aware default"
+    )
+    # Both providers' literals appear as candidates inside the trailer
+    # template — Claude is the historical default, Codex is the
+    # provider-sniff branch.
+    assert "Claude" in body, "Claude default still expected somewhere in the trailer template"
+    assert "noreply@anthropic.com" in body, (
+        "noreply@anthropic.com default still expected somewhere in the trailer template"
+    )
+    assert "Codex" in body, (
+        "Codex default expected as the provider-sniff branch in the trailer template"
+    )
+    assert "noreply@openai.com" in body, (
+        "noreply@openai.com default expected as the provider-sniff branch "
+        "in the trailer template"
+    )
+    assert "CODEX_PROJECT_DIR" in body, (
+        "commit-changes trailer must sniff $CODEX_PROJECT_DIR to pick the "
+        "provider-aware default when AUTOCC_AGENT_NAME / AUTOCC_AGENT_EMAIL "
+        "is unset"
     )
 
 

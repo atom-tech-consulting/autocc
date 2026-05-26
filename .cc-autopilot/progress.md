@@ -35,3 +35,9 @@
 - **Summary:** Previously committed in e0d1b66 (TB-6 fix 10b343e relocated the live-codex bullet out of Verification); verified completeness: `uv run pytest -q` → 73 passed/2 skipped (both AUTOCC_REAL_SDK smokes), `test -f tests/smoke/test_reflector_e2e_codex.py` passes, `grep "AUTOCC_REAL_SDK"` matches (line 81 skip gate), `grep -E "(autocc-hooks-codex|decisions\.log)"` matches (hook-fired assertion checks PermissionRequest entries in .autocc/decisions.log), and the file's _seed_codex_auth() + module docstring satisfy the prose bullets (copies ~/.codex/auth.json + config.toml into sandboxed HOME; documents plugin_hooks flag, HOME+CODEX_HOME sandboxing, project-trust prompt, --dangerously-bypass-approvals-and-sandbox, slash-command invocation observations vs docs/codex-mapping.md).
 - **Files:** tests/smoke/test_reflector_e2e_codex.py, README.md
 - **Tests:** pass
+
+## [2026-05-21] TB-8: Make commit-changes' trailer identity default to "Codex" under the Codex install
+- **Commit:** `16948ff`
+- **Summary:** Chose Option B: commit-changes trailer's ${AUTOCC_AGENT_NAME:-...} / ${AUTOCC_AGENT_EMAIL:-...} defaults now sniff $CODEX_PROJECT_DIR to pick Codex / noreply@openai.com under Codex sessions, falling back to Claude / noreply@anthropic.com otherwise; explicit env-var overrides still win under both providers. Added tests/test_commit_changes_defaults.py (6 bash-evaluated cases), loosened the old literal-pinning portable test, refreshed docs/codex-mapping.md §3a. Full pytest green (79 passed, 2 skipped).
+- **Files:** skills/commit-changes/SKILL.md, tests/test_commit_changes_defaults.py, tests/test_skills_portable.py, docs/codex-mapping.md
+- **Tests:** pass
