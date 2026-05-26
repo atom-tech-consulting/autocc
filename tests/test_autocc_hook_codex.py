@@ -303,60 +303,153 @@ def test_post_compact_camelcase_is_noop(autopilot_project):
 
 
 # ---------------------------------------------------------------------------
-# Env vars — PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT honored
+# Env vars — project-root resolution chain
+#
+# Real codex sets PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT to the *plugin install
+# directory*, NOT the project root (TB-9 surfaced this — the hook fired on
+# Stop, resolved project_dir to the plugin install dir, found no flag, and
+# silently no-op'd). The correct project anchor is one of the explicit
+# ``*_PROJECT_DIR`` env vars or the cwd that codex puts on stdin. PLUGIN_ROOT
+# / CLAUDE_PLUGIN_ROOT remain as low-priority fallbacks for synthetic
+# contexts that set them as a project-root stand-in.
 # ---------------------------------------------------------------------------
 
 
-def test_plugin_root_env_overrides_stdin_cwd(tmp_path: Path, autopilot_project: Path):
-    """The Codex binary passes PLUGIN_ROOT to hook commands
-    (docs/codex-mapping.md §1c). Honor it as the project anchor — falls
-    through to stdin cwd / os.getcwd() if unset."""
-    other_cwd = tmp_path / "elsewhere"
-    other_cwd.mkdir()
-    env = {**os.environ, "PLUGIN_ROOT": str(autopilot_project)}
-    result = subprocess.run(
+def _hook_subprocess(hook_input: dict, env: dict, cwd: Path) -> subprocess.CompletedProcess:
+    """Spawn the hook with a known env + stdin shape. Used by the resolution
+    chain tests below to keep each test focused on one env-var precedence
+    decision rather than re-spelling the subprocess plumbing."""
+    return subprocess.run(
         [sys.executable, str(HOOK), "permission_request"],
-        input=json.dumps({
-            "cwd": str(other_cwd),  # should be overridden by PLUGIN_ROOT
-            "tool_name": "Bash",
-            "tool_input": {"command": "echo hi"},
-        }),
+        input=json.dumps(hook_input),
         capture_output=True,
         text=True,
         env=env,
-        cwd=other_cwd,
+        cwd=cwd,
         timeout=10,
+    )
+
+
+def test_autocc_project_dir_env_overrides_stdin_cwd(tmp_path: Path, autopilot_project: Path):
+    """``AUTOCC_PROJECT_DIR`` is autocc's own project-anchor override and
+    sits at the top of the hook's resolution chain — set by callers that
+    want to pin the project root regardless of what the agent harness puts
+    on stdin (e.g. the live Codex smoke at
+    ``tests/smoke/test_reflector_e2e_codex.py``)."""
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR")
+    }
+    env["AUTOCC_PROJECT_DIR"] = str(autopilot_project)
+    result = _hook_subprocess(
+        {"cwd": str(other_cwd), "tool_name": "Bash", "tool_input": {"command": "echo hi"}},
+        env=env,
+        cwd=other_cwd,
     )
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
     assert out["permissionDecision"] == "allow"
-    # Log written under the autopilot_project's .autocc/, NOT other_cwd's.
+    # Log written under autopilot_project's .autocc/, NOT other_cwd's.
     assert (autopilot_project / ".autocc" / "decisions.log").is_file()
     assert not (other_cwd / ".autocc").exists()
 
 
-def test_claude_plugin_root_env_alias_honored(tmp_path: Path, autopilot_project: Path):
-    """``CLAUDE_PLUGIN_ROOT`` is Codex's Claude-prefixed alias for
-    ``PLUGIN_ROOT`` (docs/codex-mapping.md §1c). Script falls back to it
-    when PLUGIN_ROOT is unset."""
+def test_claude_project_dir_env_honored_for_parity(tmp_path: Path, autopilot_project: Path):
+    """``CLAUDE_PROJECT_DIR`` is the Claude Code project-anchor env var; the
+    Codex hook honors it for parity with ``autocc-hooks.py`` so a hook
+    invoked from a Claude-style harness still resolves the right
+    project root."""
     other_cwd = tmp_path / "elsewhere2"
     other_cwd.mkdir()
     env = {
-        k: v for k, v in os.environ.items() if k != "PLUGIN_ROOT"
+        k: v for k, v in os.environ.items()
+        if k not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "AUTOCC_PROJECT_DIR", "CODEX_PROJECT_DIR")
     }
-    env["CLAUDE_PLUGIN_ROOT"] = str(autopilot_project)
-    result = subprocess.run(
-        [sys.executable, str(HOOK), "permission_request"],
-        input=json.dumps({
-            "cwd": str(other_cwd),
-            "tool_name": "Bash",
-            "tool_input": {"command": "echo hi"},
-        }),
-        capture_output=True,
-        text=True,
+    env["CLAUDE_PROJECT_DIR"] = str(autopilot_project)
+    result = _hook_subprocess(
+        {"cwd": str(other_cwd), "tool_name": "Bash", "tool_input": {"command": "echo hi"}},
         env=env,
         cwd=other_cwd,
-        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["permissionDecision"] == "allow"
+    assert (autopilot_project / ".autocc" / "decisions.log").is_file()
+
+
+def test_stdin_cwd_wins_over_plugin_root_env(tmp_path: Path, autopilot_project: Path):
+    """Codex sets ``PLUGIN_ROOT`` to the **plugin install directory** (e.g.
+    ``$CODEX_HOME/plugins/cache/autocc/autocc/0.1.0/``), not the project
+    root — this is the bug TB-9 surfaced. The hook must prefer the cwd
+    Codex puts on stdin (which IS the project root when codex was launched
+    with ``-C <project>``) over PLUGIN_ROOT, which would otherwise route
+    flag-resolution / log-writing into the plugin's install dir and silently
+    no-op the autopilot loop."""
+    plugin_install_like = tmp_path / "plugin_install"
+    plugin_install_like.mkdir()
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("CLAUDE_PLUGIN_ROOT", "AUTOCC_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR")
+    }
+    # PLUGIN_ROOT points at a NON-project dir (the plugin install) — this
+    # mirrors the real-codex shape where PLUGIN_ROOT and the project root
+    # diverge.
+    env["PLUGIN_ROOT"] = str(plugin_install_like)
+    result = _hook_subprocess(
+        {"cwd": str(autopilot_project), "tool_name": "Bash", "tool_input": {"command": "echo hi"}},
+        env=env,
+        cwd=autopilot_project,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["permissionDecision"] == "allow"
+    # Log written under the project root from stdin, NOT under PLUGIN_ROOT.
+    assert (autopilot_project / ".autocc" / "decisions.log").is_file()
+    assert not (plugin_install_like / ".autocc").exists()
+
+
+def test_plugin_root_env_used_as_legacy_fallback(tmp_path: Path, autopilot_project: Path):
+    """When no higher-priority project-dir env var is set AND no ``cwd`` is
+    on stdin, the hook falls through to ``PLUGIN_ROOT`` before ``os.getcwd``.
+    This preserves backwards-compat with the synthetic contexts that set
+    ``PLUGIN_ROOT`` as a project-root stand-in (and exercises the
+    pre-TB-9 unit-test entry point)."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("CLAUDE_PLUGIN_ROOT", "AUTOCC_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR")
+    }
+    env["PLUGIN_ROOT"] = str(autopilot_project)
+    other_cwd = tmp_path / "elsewhere3"
+    other_cwd.mkdir()
+    # No "cwd" key on stdin — forces the fallthrough to PLUGIN_ROOT.
+    result = _hook_subprocess(
+        {"tool_name": "Bash", "tool_input": {"command": "echo hi"}},
+        env=env,
+        cwd=other_cwd,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["permissionDecision"] == "allow"
+    assert (autopilot_project / ".autocc" / "decisions.log").is_file()
+
+
+def test_claude_plugin_root_env_alias_used_as_legacy_fallback(tmp_path: Path, autopilot_project: Path):
+    """``CLAUDE_PLUGIN_ROOT`` is Codex's Claude-prefixed alias for
+    ``PLUGIN_ROOT`` (docs/codex-mapping.md §1c). Same legacy-fallback
+    semantics as the previous test."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("PLUGIN_ROOT", "AUTOCC_PROJECT_DIR", "CLAUDE_PROJECT_DIR", "CODEX_PROJECT_DIR")
+    }
+    env["CLAUDE_PLUGIN_ROOT"] = str(autopilot_project)
+    other_cwd = tmp_path / "elsewhere4"
+    other_cwd.mkdir()
+    result = _hook_subprocess(
+        {"tool_name": "Bash", "tool_input": {"command": "echo hi"}},
+        env=env,
+        cwd=other_cwd,
     )
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)

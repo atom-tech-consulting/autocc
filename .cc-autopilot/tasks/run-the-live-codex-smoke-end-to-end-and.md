@@ -157,3 +157,7 @@ Error output: Check stderr output for details
 - **timeout_s:** 1200
 - **stderr_tail:** 
 - **Debug dumps:** `prompt: .cc-autopilot/debug/20260521T173154Z-TB-9.prompt.md`, `stream: .cc-autopilot/debug/20260521T173154Z-TB-9.stream.jsonl`, `messages: .cc-autopilot/debug/20260521T173154Z-TB-9.messages.jsonl`
+### 2026-05-21 — blocked
+Codex live smoke cannot pass on codex-cli 0.132: `codex exec --enable plugin_hooks --dangerously-bypass-hook-trust` does not actually spawn hook commands (mirroring to the stable `[hooks]` table also doesn't fire); plugin install/discovery/skills/reflector loop all verified working end-to-end against real codex. Fixed three autocc-side bugs found during investigation (hook script's PLUGIN_ROOT-as-project-anchor bug, missing Stop logging, missing marketplace registration in the smoke fixture); the residual blocker is the Codex CLI's incomplete plugin_hooks dispatcher + TUI-only hook-trust flow, documented end-to-end in docs/codex-smoke-results.md with the reproduction recipe for re-running once codex ships the fix. All 82 unit tests pass.
+- **commit:** ffa523e
+- **Debug dumps:** `prompt: .cc-autopilot/debug/20260521T230849Z-TB-9.prompt.md`, `stream: .cc-autopilot/debug/20260521T230849Z-TB-9.stream.jsonl`, `messages: .cc-autopilot/debug/20260521T230849Z-TB-9.messages.jsonl`

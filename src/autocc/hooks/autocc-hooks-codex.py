@@ -56,15 +56,36 @@ LOG_FILE = "decisions.log"
 
 def main():
     hook_input = json.load(sys.stdin)
-    # Codex mirrors the Claude Code env-var contract for hook commands
-    # (docs/codex-mapping.md §1c): the binary exposes PLUGIN_ROOT /
-    # CLAUDE_PLUGIN_ROOT to hook processes. Honor them when present so a
-    # hook wired through Codex's plugin loader picks up the right anchor;
-    # fall back to the session cwd Codex puts on stdin, then os.getcwd().
+    # Project-root resolution chain. Codex's binary passes ``PLUGIN_ROOT`` /
+    # ``CLAUDE_PLUGIN_ROOT`` to hook processes, but those point at the
+    # **plugin install directory** (``$CODEX_HOME/plugins/cache/<mp>/<name>/
+    # <version>/``), NOT the project root — TB-9's live smoke surfaced this:
+    # codex fired ``Stop`` against autocc, the hook resolved
+    # ``project_dir`` to the plugin install dir, found no
+    # ``.autocc/flag`` there, and silently no-op'd. So PLUGIN_ROOT is
+    # demoted to a low-priority fallback (kept for synthetic-test
+    # compatibility) and the real anchors come first:
+    #
+    #   AUTOCC_PROJECT_DIR  — autocc's own override, honored across hooks +
+    #                         skills (see skills/*/SKILL.md's PWD chain).
+    #   CLAUDE_PROJECT_DIR  — Claude Code's project-dir env var; honored for
+    #                         parity with autocc-hooks.py.
+    #   CODEX_PROJECT_DIR   — Codex's planned project-dir env var (not yet
+    #                         set by the 0.132 binary, but read defensively).
+    #   hook_input["cwd"]   — Codex puts the session cwd on stdin; this is
+    #                         the project root when codex was launched with
+    #                         ``-C <project>``.
+    #   PLUGIN_ROOT / CLAUDE_PLUGIN_ROOT — legacy fallbacks (incorrect for
+    #                         real codex but synthetic unit tests rely on
+    #                         them as a project-root stand-in).
+    #   os.getcwd()         — last-resort default.
     project_dir = (
-        os.environ.get("PLUGIN_ROOT")
-        or os.environ.get("CLAUDE_PLUGIN_ROOT")
+        os.environ.get("AUTOCC_PROJECT_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.environ.get("CODEX_PROJECT_DIR")
         or hook_input.get("cwd")
+        or os.environ.get("PLUGIN_ROOT")
+        or os.environ.get("CLAUDE_PLUGIN_ROOT")
         or os.getcwd()
     )
     hook_type = sys.argv[1] if len(sys.argv) > 1 else "unknown"
@@ -185,6 +206,12 @@ def handle_stop(project_dir, hook_input):
     decision:block without a non-empty reason``). Always emit a substantive
     reason when blocking; on the terminal paths (already nudged, or board
     empty) drop the flag and emit ``{}`` so Codex stops naturally.
+
+    Every Stop decision is logged to ``.autocc/decisions.log`` so the
+    audit trail captures hook firings beyond just PermissionRequest — under
+    ``--dangerously-bypass-approvals-and-sandbox`` codex never issues
+    permission requests, so Stop is the universal "hook fired" signal a
+    live smoke or operator can grep for.
     """
     flag_path = os.path.join(project_dir, AUTOPILOT_DIR, FLAG_FILE)
     if not os.path.exists(flag_path):
@@ -194,14 +221,17 @@ def handle_stop(project_dir, hook_input):
     if hook_input.get("stop_hook_active", False):
         # Codex was already nudged and stopped again — genuinely nothing to do.
         _remove_flag(flag_path)
+        log_decision(project_dir, "Stop", "stop_hook_active=true; flag dropped", "stop")
         output({})
         return
 
     if _board_is_empty(project_dir):
         _remove_flag(flag_path)
+        log_decision(project_dir, "Stop", "board empty; flag dropped", "stop")
         output({})
         return
 
+    log_decision(project_dir, "Stop", "board has work; nudging to /reflector", "block")
     output({
         "decision": "block",
         "reason": (
