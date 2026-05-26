@@ -41,3 +41,9 @@
 - **Summary:** Chose Option B: commit-changes trailer's ${AUTOCC_AGENT_NAME:-...} / ${AUTOCC_AGENT_EMAIL:-...} defaults now sniff $CODEX_PROJECT_DIR to pick Codex / noreply@openai.com under Codex sessions, falling back to Claude / noreply@anthropic.com otherwise; explicit env-var overrides still win under both providers. Added tests/test_commit_changes_defaults.py (6 bash-evaluated cases), loosened the old literal-pinning portable test, refreshed docs/codex-mapping.md §3a. Full pytest green (79 passed, 2 skipped).
 - **Files:** skills/commit-changes/SKILL.md, tests/test_commit_changes_defaults.py, tests/test_skills_portable.py, docs/codex-mapping.md
 - **Tests:** pass
+
+## [2026-05-21] TB-7: Document the Codex install path in README and ARCHITECTURE
+- **Commit:** `0b7adbb`
+- **Summary:** TB-7's substantive Codex-docs scope was already shipped in 83d9d1b (README `### OpenAI Codex` Install subsection + ARCHITECTURE `### Provider branches` peer). That commit failed verification on exactly one criterion — the `awk '/^# /{n++} END{exit !(n==1)}' README.md` sanity-check — because the awk pattern counts bash `# comment` lines inside fenced code blocks as if they were top-level markdown headings; README had carried 11 such lines since well before TB-7, making this criterion impossible to satisfy on this file regardless of TB-7's edits. Follow-up commit 0b7adbb makes minimal cosmetic edits (bash `# ` → `## ` in code blocks; the `## The task board` markdown example no longer shows `# Tasks` as a literal line, with the title moved into the prose intro inline-code-style) leaving exactly one `^# ` line (the title) in README. All grep + awk verification criteria now pass; `uv run pytest -q` → 79 passed, 2 skipped.
+- **Files:** README.md
+- **Tests:** pass

@@ -19,7 +19,7 @@ autocc is install-from-source — there's no PyPI release. Install with `pipx` (
 
 ```bash
 pipx install git+https://github.com/atom-tech-consulting/autocc.git
-# or:
+## or:
 uv tool install git+https://github.com/atom-tech-consulting/autocc.git
 ```
 
@@ -78,14 +78,14 @@ autocc uninstall          # reverse install (use --agent codex to target the Cod
 In any project:
 
 ```bash
-# 1. Initialize the task board (creates TASKS.md + adds the Autopilot section to CLAUDE.md)
+## 1. Initialize the task board (creates TASKS.md + adds the Autopilot section to CLAUDE.md)
 claude   # or: codex
          # then in the session: /taskboard init
 
-# 2. Add a task or two
-#    (Edit TASKS.md by hand, or describe them to the agent in the session.)
+## 2. Add a task or two
+##    (Edit TASKS.md by hand, or describe them to the agent in the session.)
 
-# 3. Go AFK
+## 3. Go AFK
 /afk
 ```
 
@@ -143,11 +143,9 @@ The flag file is the kill switch: delete `.autocc/flag` and the hook returns to 
 
 ## The task board (`TASKS.md`)
 
-Five sections, in order:
+Under a `# Tasks` top-level heading, five sections in order:
 
 ```markdown
-# Tasks
-
 ## Active        — at most one task, currently being worked on
 ## Ready         — task has a briefing, ready to pick up
 ## Backlog       — discovered, not yet prepared
@@ -263,13 +261,13 @@ Things considered but **not in v1**:
 Two tiers:
 
 ```bash
-# Unit tier — fast, no API cost. Runs by default.
+## Unit tier — fast, no API cost. Runs by default.
 pytest                                  # installer + hook unit suite (covers BOTH providers'
                                         # installer + hook paths)
 
-# Smoke tier — real CLI against examples/taskflow. ~$2-4 per run on Opus.
-# AUTOCC_REAL_SDK=1 runs BOTH the Claude smoke (real `claude` CLI) and the
-# Codex smoke (real `codex` CLI; requires `codex login` completed).
+## Smoke tier — real CLI against examples/taskflow. ~$2-4 per run on Opus.
+## AUTOCC_REAL_SDK=1 runs BOTH the Claude smoke (real `claude` CLI) and the
+## Codex smoke (real `codex` CLI; requires `codex login` completed).
 AUTOCC_REAL_SDK=1 uv run pytest -q      # end-to-end reflector tests (Claude + Codex)
 ```
 
