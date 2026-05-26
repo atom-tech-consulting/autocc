@@ -106,6 +106,7 @@ TB-4 (no new abstraction); proposal #2 is documentation only.
   daemon's per-task verifier can pass the remaining auto-verifiable
   bullets and TB-5 promotes through to Complete; the actual
   real-SDK smoke run stays operator-triggered as designed.
+- Roadmap complete: all 1 `## Current focus:` heading(s) in `goal.md` are exhausted. Ideation is parked (no active focus); extend the roadmap (add new `## Current focus:` headings via `ap2 update-goal`) to resume ideation, or `ap2 ack roadmap_complete` to dismiss this notice. Task dispatch is NOT affected — already-queued Backlog tasks continue to drain. Use `ap2 pause` for a full stop.
 
 ## Proposals this cycle
 - TB-6: `#fix-briefing` — strip the live-`codex` `AUTOCC_REAL_SDK=1`

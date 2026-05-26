@@ -32,3 +32,9 @@ coverage.xml
 
 # ap2 board lock (runtime)
 TASKS.md.lock
+
+# ap2 daemon per-host runtime state (not portable across machines)
+.cc-autopilot/cron.yaml
+.cc-autopilot/daemon_state.json
+.cc-autopilot/focus_pointer.json
+.cc-autopilot/retry_state.json
