@@ -272,3 +272,81 @@ queue:
    `_register_user_hooks_in_config` step is scoped to the test's
    sandboxed HOME for the same reason; it must not appear in
    `src/autocc/installer.py`.
+
+## Re-validation 2026-05-21 (post-unfreeze)
+
+TB-9 was unfrozen by the operator after ffa523e and re-attempted to
+confirm the blocker still stands on the current local codex install.
+This section captures what changed and what didn't.
+
+### What changed
+
+- **`codex features list` now reports `plugin_hooks` as `stable, true`**
+  by default (previously labelled `under development, false` per
+  ffa523e's investigation). The feature flag graduated, but the
+  *dispatcher* behavior is unchanged on 0.132.0 — `codex exec` still
+  does not spawn hook commands even with the feature reported as
+  stable+enabled.
+- **`codex doctor` reports `0.133.0 available (current 0.132.0)`.**
+  Upgrading the local codex install via `codex update` (which shells
+  out to `npm install -g @openai/codex`) is blocked under this
+  agent's user — the system-wide
+  `/opt/homebrew/lib/node_modules/@openai/codex` path requires root
+  to overwrite. A user with sudo could `npm install -g
+  @openai/codex@latest` to pick up 0.133.0 and re-run the smoke.
+
+### What was re-confirmed (still red on 0.132.0)
+
+The smoke was re-run end-to-end against the same binary:
+
+    AUTOCC_REAL_SDK=1 \
+    AUTOCC_SMOKE_WORKSPACE=/tmp/tb9-final-smoke/ws \
+    uv run pytest -q tests/smoke/test_reflector_e2e_codex.py -s
+
+Outcome: same as ffa523e's run. `codex exec` ran to completion, the
+model invoked `/reflector`, completed `TB-99`, appended the smoke
+marker to `README.md`, moved the task to `## Complete`, and committed
+locally with subject `Complete TB-99 smoke marker` (stretch
+assertion would have passed). But `.autocc/decisions.log` was again
+absent — no hook command spawned, despite `--enable plugin_hooks
+--dangerously-bypass-hook-trust` and the plugin's hooks mirrored
+under the stable `[hooks]` table in the sandboxed `config.toml`.
+The session JSONL contains no `HookStarted` / `HookCompleted` rows.
+
+### Minimal standalone repro (rules out autocc-side cause)
+
+To rule out any remaining autocc-specific cause, a one-off minimal
+plugin was built in `/tmp/tb9-minimal/` with a single Stop hook
+whose handler just appends a line to a file. Same setup steps as
+the smoke (sandboxed `HOME` / `CODEX_HOME`, `codex plugin
+marketplace add`, `codex plugin add`, project trust seeded).
+Running `codex exec --enable plugin_hooks
+--dangerously-bypass-approvals-and-sandbox
+--dangerously-bypass-hook-trust --skip-git-repo-check -C
+<project> "Print the contents of README.md and then stop."` against
+the minimal repro produced the same fail mode: the bypass-warning
+prints (`` warning: `--dangerously-bypass-hook-trust` is enabled.
+Enabled hooks may run without review for this invocation. ``), codex
+runs the prompt, then exits cleanly — and no hook command was
+spawned (the touch-file the hook would have written is absent).
+The same is true with the hook entries mirrored under user-level
+`[hooks]` in the sandboxed `config.toml`, and with PreToolUse /
+PostToolUse / Stop all registered.
+
+This rules out every autocc-specific input shape (project-dir
+resolution chain, hook script wire format, decision-log gating,
+marketplace.json schema, plugin.json metadata) as the cause. The
+fail mode is "no hook command of any shape ever spawns under
+`codex exec` on 0.132.0", end of story. The autocc install path
+and hook script are sound; the binary's dispatcher is the wall.
+
+### Disposition
+
+TB-9 is reporting `blocked` again. The blocker is unchanged from
+ffa523e: `codex exec` does not invoke hooks on codex-cli 0.132.0,
+and the fix (or workaround) is gated on either a codex CLI update
+(0.133.0 +) or operator-driven manual TUI trust seeding, neither
+of which is reachable from this agent's sandbox. Recommendation
+(1) in the previous section — re-run on each codex-cli minor
+release — is the next concrete step; 0.133.0 is the first
+candidate.

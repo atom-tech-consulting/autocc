@@ -9,6 +9,7 @@
 ## Backlog
 
 - [ ] **TB-9** **Run the live Codex smoke end-to-end and confirm it actually passes** `#codex` `#smoke` `#tests` `#live` `@blocked:TB-5` [→ brief](.cc-autopilot/tasks/run-the-live-codex-smoke-end-to-end-and.md)
+- [ ] **TB-10** **Re-home Codex hooks to config-layer install + crack non-interactive hook trust** `#codex` `#hooks` `#installer` `#spike` [→ brief](.cc-autopilot/tasks/re-home-codex-hooks-to-config-layer-inst.md)
 
 ## Pipeline Pending
 
