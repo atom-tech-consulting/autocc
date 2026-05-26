@@ -1,7 +1,8 @@
 """Smoke tests for autocc.installer.
 
-These run install/uninstall against a tmp CLAUDE_HOME and verify the on-disk
-result. They do NOT touch the user's real ~/.claude.
+These run install/uninstall against a tmp CLAUDE_HOME (claude branch) or a tmp
+AUTOCC_CODEX_PLUGIN_ROOT + marketplace path (codex branch) and verify the
+on-disk result. They do NOT touch the user's real ~/.claude or ~/plugins.
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ from pathlib import Path
 import pytest
 
 from autocc.installer import (
+    CODEX_HOOK_BASENAME,
+    CODEX_HOOK_EVENTS,
+    CODEX_PLUGIN_NAME,
     HOOK_MARKER,
     SKILL_NAMES,
     install,
@@ -140,3 +144,209 @@ def test_status_reports_wired_after_install(fake_home: Path, capsys):
     out = capsys.readouterr().out
     assert "✓" in out
     assert "autocc hooks wired" in out
+
+
+# ---------------------------------------------------------------------------
+# Codex provider branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def codex_paths(tmp_path: Path) -> tuple[Path, Path]:
+    """Return (plugin_root, marketplace_path) anchored under tmp_path."""
+    plugin_root = tmp_path / "codex_plugins"
+    plugin_root.mkdir()
+    marketplace_path = tmp_path / "agents" / "plugins" / "marketplace.json"
+    # don't pre-create the parent dir — installer should mkdir as needed
+    return plugin_root, marketplace_path
+
+
+def test_codex_install_creates_plugin_tree_and_marketplace_entry(
+    codex_paths: tuple[Path, Path],
+):
+    plugin_root, marketplace_path = codex_paths
+    rc = install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    assert rc == 0
+
+    plugin_dir = plugin_root / CODEX_PLUGIN_NAME
+    # 1. plugin manifest
+    manifest_path = plugin_dir / ".codex-plugin" / "plugin.json"
+    assert manifest_path.is_file(), f"missing {manifest_path}"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["name"] == CODEX_PLUGIN_NAME
+    assert manifest["skills"] == "./skills/"
+    assert manifest["hooks"] == "./hooks.json"
+    assert "version" in manifest
+    assert "description" in manifest
+
+    # 2. Skills tree
+    for name in SKILL_NAMES:
+        skill_md = plugin_dir / "skills" / name / "SKILL.md"
+        assert skill_md.is_file(), f"missing {skill_md}"
+
+    # 3. Stub hook script
+    hook_script = plugin_dir / "hooks" / CODEX_HOOK_BASENAME
+    assert hook_script.is_file()
+    assert hook_script.stat().st_mode & 0o100, "stub hook should be executable"
+
+    # 4. hooks.json registering each Codex-supported event
+    hooks_json_path = plugin_dir / "hooks.json"
+    assert hooks_json_path.is_file()
+    hooks_payload = json.loads(hooks_json_path.read_text())
+    for event in CODEX_HOOK_EVENTS:
+        assert event in hooks_payload["hooks"], f"hooks.json missing {event}"
+        entries = hooks_payload["hooks"][event]
+        assert entries, f"{event} has no handler entries"
+        cmd = entries[0]["hooks"][0]["command"]
+        assert CODEX_HOOK_BASENAME in cmd
+        assert event in cmd  # hook script receives the event name as arg
+
+    # 5. Marketplace entry
+    assert marketplace_path.is_file()
+    marketplace = json.loads(marketplace_path.read_text())
+    assert "plugins" in marketplace
+    matching = [
+        p for p in marketplace["plugins"]
+        if isinstance(p, dict) and p.get("name") == CODEX_PLUGIN_NAME
+    ]
+    assert len(matching) == 1, f"expected one autocc entry, got {matching}"
+    entry = matching[0]
+    assert entry["source"] == {
+        "source": "local",
+        "path": f"./plugins/{CODEX_PLUGIN_NAME}",
+    }
+    assert entry["policy"]["installation"] == "AVAILABLE"
+    assert entry["policy"]["authentication"] == "ON_INSTALL"
+    assert entry["category"]
+
+
+def test_codex_install_is_idempotent(codex_paths: tuple[Path, Path]):
+    plugin_root, marketplace_path = codex_paths
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    before = marketplace_path.read_text()
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    after = marketplace_path.read_text()
+    assert before == after, "second install should be a no-op against marketplace"
+
+    # plugins[] should still have exactly one autocc entry
+    payload = json.loads(after)
+    matching = [
+        p for p in payload["plugins"]
+        if isinstance(p, dict) and p.get("name") == CODEX_PLUGIN_NAME
+    ]
+    assert len(matching) == 1
+
+
+def test_codex_install_preserves_existing_marketplace_entries(
+    codex_paths: tuple[Path, Path],
+):
+    plugin_root, marketplace_path = codex_paths
+    # Pre-existing user marketplace with another plugin and a custom display name
+    marketplace_path.parent.mkdir(parents=True, exist_ok=True)
+    marketplace_path.write_text(json.dumps({
+        "name": "my-marketplace",
+        "interface": {"displayName": "My Marketplace"},
+        "plugins": [
+            {
+                "name": "other-plugin",
+                "source": {"source": "local", "path": "./plugins/other-plugin"},
+                "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                "category": "Productivity",
+            },
+        ],
+    }))
+
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+
+    payload = json.loads(marketplace_path.read_text())
+    # top-level metadata preserved
+    assert payload["name"] == "my-marketplace"
+    assert payload["interface"]["displayName"] == "My Marketplace"
+    # other plugin preserved
+    names = [p["name"] for p in payload["plugins"]]
+    assert "other-plugin" in names
+    assert CODEX_PLUGIN_NAME in names
+
+
+def test_codex_uninstall_removes_plugin_and_marketplace_entry(
+    codex_paths: tuple[Path, Path],
+):
+    plugin_root, marketplace_path = codex_paths
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    plugin_dir = plugin_root / CODEX_PLUGIN_NAME
+    assert plugin_dir.is_dir()
+    assert json.loads(marketplace_path.read_text())["plugins"]
+
+    rc = uninstall(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    assert rc == 0
+    assert not plugin_dir.exists(), "plugin directory should be removed"
+
+    payload = json.loads(marketplace_path.read_text())
+    matching = [
+        p for p in payload["plugins"]
+        if isinstance(p, dict) and p.get("name") == CODEX_PLUGIN_NAME
+    ]
+    assert matching == [], "autocc entry should be stripped from marketplace"
+
+
+def test_codex_uninstall_preserves_other_marketplace_entries(
+    codex_paths: tuple[Path, Path],
+):
+    plugin_root, marketplace_path = codex_paths
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    # Add an unrelated user entry after install
+    payload = json.loads(marketplace_path.read_text())
+    payload["plugins"].append({
+        "name": "other-plugin",
+        "source": {"source": "local", "path": "./plugins/other-plugin"},
+        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+        "category": "Productivity",
+    })
+    marketplace_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    uninstall(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+
+    after = json.loads(marketplace_path.read_text())
+    names = [p["name"] for p in after["plugins"]]
+    assert CODEX_PLUGIN_NAME not in names
+    assert "other-plugin" in names
+
+
+def test_codex_dry_run_writes_nothing(codex_paths: tuple[Path, Path]):
+    plugin_root, marketplace_path = codex_paths
+    rc = install(
+        agent="codex",
+        dry_run=True,
+        plugin_root=plugin_root,
+        marketplace_path=marketplace_path,
+    )
+    assert rc == 0
+    plugin_dir = plugin_root / CODEX_PLUGIN_NAME
+    assert not plugin_dir.exists()
+    assert not marketplace_path.exists()
+
+
+def test_codex_status_reports_unwired(codex_paths: tuple[Path, Path], capsys):
+    plugin_root, marketplace_path = codex_paths
+    rc = status(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "✗" in out
+
+
+def test_codex_status_reports_wired_after_install(
+    codex_paths: tuple[Path, Path], capsys
+):
+    plugin_root, marketplace_path = codex_paths
+    install(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    status(agent="codex", plugin_root=plugin_root, marketplace_path=marketplace_path)
+    out = capsys.readouterr().out
+    assert "✓" in out
+    assert "autocc plugin entry registered" in out
+
+
+def test_unknown_agent_returns_error(tmp_path: Path, capsys):
+    rc = install(agent="bogus")
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown agent" in err
