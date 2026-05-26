@@ -350,3 +350,74 @@ of which is reachable from this agent's sandbox. Recommendation
 (1) in the previous section — re-run on each codex-cli minor
 release — is the next concrete step; 0.133.0 is the first
 candidate.
+
+## Re-validation 2026-05-22 (codex-cli 0.133.0)
+
+TB-9 was unfrozen again after c5f72c5 to chase recommendation (1):
+re-run on the next codex-cli minor release. This section captures
+the outcome on 0.133.0 — installed user-locally via
+`npm install -g --prefix=$HOME/.local/npm @openai/codex@0.133.0` to
+sidestep the root-required system-wide upgrade path. The local
+copy resolves to `/Users/claude-agent/.local/npm/bin/codex` →
+`...node_modules/@openai/codex-darwin-arm64/.../codex` and reports
+`codex-cli 0.133.0` from `codex --version`.
+
+### What was re-tested
+
+A minimal one-off plugin (`/tmp/tb9-probe-133/home/plugins/probe/`)
+with a single `Stop` hook that appends to a marker file, registered
+via `codex plugin marketplace add` + `codex plugin add probe@probe-mp`
+in a sandboxed `HOME` / `CODEX_HOME`, exercised under two
+configurations:
+
+1. **Plugin `hooks.json` only, `--enable plugin_hooks`,
+   `--dangerously-bypass-hook-trust`.** Same flags as the smoke.
+   Codex `exec` ran the trivial prompt (`"Print the word DONE and
+   stop."`) to completion. Marker file: absent. Session JSONL:
+   no `HookStarted` / `HookCompleted` rows.
+2. **Plugin `hooks.json` + the same handler entries mirrored under
+   `[[hooks.Stop]]` / `[[hooks.PreToolUse]]` in `config.toml`'s
+   stable `[hooks]` table** (the workaround
+   `_register_user_hooks_in_config` applies in the smoke). Codex
+   `exec` ran the prompt to completion again. Marker file: still
+   absent. Session JSONL: still empty of hook events.
+
+Both runs printed the documented bypass warning
+(`` warning: `--dangerously-bypass-hook-trust` is enabled. Enabled
+hooks may run without review for this invocation. ``), so the
+flag is parsed and acknowledged at startup. The dispatcher is
+simply never invoked for hook commands — `codex_hooks` and
+`plugin_hooks` are both `stable, true` in `codex features list` on
+0.133.0, but `codex exec` does not actually spawn either source's
+configured commands. The minor-release bump did NOT close the gap.
+
+### Why the smoke wasn't re-run
+
+The full smoke (`tests/smoke/test_reflector_e2e_codex.py`) would
+have produced the same outcome at much higher cost (model tokens,
+wall-clock, three prior post-unfreeze attempts already hit the
+1200s daemon timeout). The minimal probe above isolates the exact
+question the smoke's mandatory assertion gates on — "does the hook
+command spawn?" — and answers it independently of the autocc
+install path, the reflector skill body, the seeded task, or the
+commit-changes flow. With the probe's answer firmly NO on
+0.133.0, running the smoke would just re-derive the same failure
+via a 5-minute model trajectory. The autocc-side fixes from
+ffa523e (project-dir resolution, Stop-decision logging,
+marketplace fixture) remain durable and correct against the
+binary's documented contract; they will be sufficient once codex
+actually invokes the dispatcher.
+
+### Disposition (unchanged)
+
+TB-9 is reporting `blocked` again. The blocker is unchanged from
+c5f72c5: `codex exec` does not invoke hooks on the current codex
+CLI on this machine — now confirmed across **both 0.132.0 and
+0.133.0**, ruling out the "wait for the next minor release"
+recommendation from the previous re-validation. The next concrete
+step is to track the codex-cli changelog for an explicit "fix
+hook dispatch in `codex exec`" entry rather than blindly bumping
+on each minor release, since two consecutive minors have shipped
+with the same gap. The autocc-side smoke is hardened and ready;
+flipping `decisions.log` from absent to present requires only that
+codex starts spawning the configured hook command.

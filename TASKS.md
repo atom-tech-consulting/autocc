@@ -8,7 +8,6 @@
 
 ## Backlog
 
-- [ ] **TB-9** **Run the live Codex smoke end-to-end and confirm it actually passes** `#codex` `#smoke` `#tests` `#live` `@blocked:TB-5` [→ brief](.cc-autopilot/tasks/run-the-live-codex-smoke-end-to-end-and.md)
 - [ ] **TB-10** **Re-home Codex hooks to config-layer install + crack non-interactive hook trust** `#codex` `#hooks` `#installer` `#spike` [→ brief](.cc-autopilot/tasks/re-home-codex-hooks-to-config-layer-inst.md)
 
 ## Pipeline Pending
@@ -26,3 +25,5 @@
 - [x] **TB-7** **Document the Codex install path in README and ARCHITECTURE** `#codex` `#docs` — Add Codex install + hook documentation to README and ARCHITECTURE alongside the existing Claude Code coverage, closing goal.md Done-when bullet #4. [→ brief](.cc-autopilot/tasks/document-the-codex-install-path-in-readm.md)
 
 ## Frozen
+
+- [ ] **TB-9** **Run the live Codex smoke end-to-end and confirm it actually passes** `#codex` `#smoke` `#tests` `#live` `@blocked:TB-5` [→ brief](.cc-autopilot/tasks/run-the-live-codex-smoke-end-to-end-and.md)
