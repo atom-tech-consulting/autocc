@@ -1,0 +1,8 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/document-the-codex-install-path-in-readm.md",
+  "focus_anchor": "a first time codex user can",
+  "proposed_at": "2026-05-18T18:18:42Z",
+  "tb_id": "TB-7",
+  "why_now": "The Codex install path runs end-to-end against synthetic\nfixtures today (the installer's `--agent codex` flag, the\n`autocc-hooks-codex.py` script, and the env-var-fallback skill\nglue are all already on disk and covered by passing unit tests),\nbut a Codex user reading README.md still sees only the\nClaude-Code instructions. Without this docs pass, even an\noperator who fully understands the implementation has no\nlinkable docs to point a new Codex user at, and the \"first-time\nCodex user can pipx install \u2192 autocc install \u2192 start the loop\"\nDone-when bullet #2 has no documented entry point. Shipping\nthe docs alongside the implementation prevents the standard\n\"code shipped, README stale\" drift while it's cheap to fix."
+}

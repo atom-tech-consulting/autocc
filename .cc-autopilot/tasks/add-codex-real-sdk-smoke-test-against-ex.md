@@ -153,3 +153,22 @@ when the environment cooperates.
   surface — out of scope for the smoke (the install
   path doesn't use it); a separate task can probe it
   via `codex` source/runtime if/when needed.
+## Attempts
+
+### 2026-05-18 — verification_failed
+(no summary)
+- **kind:** per_task
+- **failed_criteria:** [fail] `bash -c 'AUTOCC_REAL_SDK=1 uv run pytest -q tests/smoke/test_reflector_e2e_codex.py'` — the newsmoke runs and passes wh
+- **Debug dumps:** `prompt: .cc-autopilot/debug/20260518T180222Z-TB-5.prompt.md`, `stream: .cc-autopilot/debug/20260518T180222Z-TB-5.stream.jsonl`, `messages: .cc-autopilot/debug/20260518T180222Z-TB-5.messages.jsonl`
+### 2026-05-18 — error
+(no summary)
+- **error:** Exception: Command failed with exit code 1 (exit code: 1)
+Error output: Check stderr output for details
+- **stderr_tail:** 
+- **Debug dumps:** `prompt: .cc-autopilot/debug/20260518T180612Z-TB-5.prompt.md`, `stream: .cc-autopilot/debug/20260518T180612Z-TB-5.stream.jsonl`, `messages: .cc-autopilot/debug/20260518T180612Z-TB-5.messages.jsonl`
+### 2026-05-18 — error
+(no summary)
+- **error:** Exception: Command failed with exit code 1 (exit code: 1)
+Error output: Check stderr output for details
+- **stderr_tail:** 
+- **Debug dumps:** `prompt: .cc-autopilot/debug/20260518T181116Z-TB-5.prompt.md`, `stream: .cc-autopilot/debug/20260518T181116Z-TB-5.stream.jsonl`, `messages: .cc-autopilot/debug/20260518T181116Z-TB-5.messages.jsonl`

@@ -1,0 +1,15 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/fix-tb-5-briefing-move-live-codex-autocc.md",
+  "focus_anchor": "current focus openai codex provider support",
+  "outcome": {
+    "commit": null,
+    "decision_actor": "operator",
+    "decision_kind": "approved",
+    "decision_ts": "2026-05-19T04:24:52Z",
+    "reason": ""
+  },
+  "proposed_at": "2026-05-18T18:17:24Z",
+  "tb_id": "TB-6",
+  "why_now": "TB-5 is Frozen at `retry_exhausted` blocking the last\nDone-when bullet (\"opt-in real-SDK smoke test runs cleanly...\nunder Codex as well as Claude Code\"). The implementation is on\ndisk per commit `e0d1b66`; only the briefing needs surgery so\nthe daemon can confirm the remaining auto-verifiable bullets and\nlet the operator unfreeze TB-5 for promotion. Without this fix\nTB-5 stays Frozen indefinitely and the smoke-coverage gap\nremains formally open even though the test file exists."
+}

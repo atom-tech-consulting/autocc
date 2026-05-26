@@ -224,8 +224,10 @@ Two tiers:
 # Unit tier — fast, no API cost. Runs by default.
 pytest                                  # 29 tests: 8 installer + 21 hook
 
-# Smoke tier — real claude CLI against examples/taskflow. ~$2-4 per run on Opus.
-AUTOCC_REAL_SDK=1 pytest tests/smoke/   # 1 end-to-end reflector test
+# Smoke tier — real CLI against examples/taskflow. ~$2-4 per run on Opus.
+# AUTOCC_REAL_SDK=1 runs BOTH the Claude smoke (real `claude` CLI) and the
+# Codex smoke (real `codex` CLI; requires `codex login` completed).
+AUTOCC_REAL_SDK=1 pytest tests/smoke/   # end-to-end reflector tests (Claude + Codex)
 ```
 
 See [`tests/smoke/README.md`](tests/smoke/README.md) for what the smoke verifies and how it's gated.

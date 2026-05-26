@@ -1,0 +1,8 @@
+{
+  "blocked_on": "review",
+  "briefing_path": ".cc-autopilot/tasks/make-commit-changes-trailer-identity-def.md",
+  "focus_anchor": "current focus openai codex provider support",
+  "proposed_at": "2026-05-18T18:19:26Z",
+  "tb_id": "TB-8",
+  "why_now": "The `--agent codex` install branch is live and shipping\ncommits authored by Codex sessions, but every such commit\nattributes co-authorship to \"Claude\" by default. That is a\nuser-visible correctness bug on every Codex commit: the trailer\nis a permanent git-log artifact, so the gap accumulates fast.\nFixing it now \u2014 before any production Codex run lands a mass of\nmis-attributed commits \u2014 is much cheaper than rewriting commit\nhistory later. This closes a small but cumulative gap inside\nthe \"Skills are portable across providers\" Done-when bullet."
+}
