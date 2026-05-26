@@ -13,7 +13,9 @@ shipping a precompiled Rust binary under
 Where the codex binary's `--help` text doesn't surface a behavior,
 I cite the strings table extracted from that binary — most internal
 type names, hook event identifiers, and JSON wire shapes are reachable
-that way, even though they aren't in the CLI help.
+that way, even though they aren't in the CLI help. Where a claim
+depends on a shape that wasn't directly verifiable (e.g. specific
+JSON-RPC method names), I say so explicitly rather than asserting.
 
 Out-of-scope surfaces (Codex Cloud, the desktop app, the remote
 exec-server, multi-agent v2 features) are not covered — autocc v1 is
@@ -33,33 +35,55 @@ files inside that the autocc installer cares about:
 |---|---|---|
 | `~/.codex/config.toml` | Single-file user config. TOML. Holds model selection, sandbox, MCP servers, **and a top-level `[hooks]` table** (the codex binary's `HookStateToml` deserializer accepts `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, and the other CamelCase hook event names directly as table keys). | `~/.claude/settings.json` |
 | `~/.codex/skills/` | User-installed skills (peer of the `~/.codex/skills/.system/` directory codex ships preinstalled — `skill-creator`, `plugin-creator`, `skill-installer`, `imagegen`, `openai-docs`). The `skill-installer` skill defaults its dest path to `${CODEX_HOME:-$HOME/.codex}/skills/<skill-name>`. Each skill is `<skill>/SKILL.md` with YAML frontmatter `name:` and `description:`. | `~/.claude/skills/<skill>/SKILL.md` |
-| `~/.codex/plugins/` (or repo-rooted `<repo>/plugins/`) | Plugins. A plugin is a directory with `.codex-plugin/plugin.json` plus optional `skills/`, `hooks.json`, `.mcp.json`, `.app.json`, `assets/`. Plugin manifests are surfaced to codex via a marketplace file. | n/a (Claude Code's nearest analog is shipping a skill + hook + statusline bundle as separate files under `~/.claude/`) |
+| `~/plugins/<name>/` (home-rooted) or `<repo-root>/plugins/<name>/` (repo-rooted) | Plugins. A plugin is a directory with `.codex-plugin/plugin.json` plus optional `skills/`, `hooks.json`, `.mcp.json`, `.app.json`, `assets/`. **Discovery is marketplace-driven, not filesystem-scan** — codex's `core-plugins/src/loader.rs` reads plugins from marketplaces, so the plugin folder can technically live anywhere the marketplace's `source.path` points. `~/plugins/<name>/` is the documented convention (from `plugin-creator/SKILL.md`); `~/.codex/plugins/` is NOT a Codex convention and is not referenced anywhere in the plugin-creator or skill-installer documentation. | n/a (Claude Code's nearest analog is shipping a skill + hook + statusline bundle as separate files under `~/.claude/`) |
 | `~/.agents/plugins/marketplace.json` (or `<repo>/.agents/plugins/marketplace.json`) | Marketplace index listing plugin entries with `source.path`, `policy.installation`, `policy.authentication`, `category`. Codex's plugin-creator skill documents the exact shape. | n/a |
 | `~/.codex/sessions/` | Per-session rollout state. Read-only from an installer's perspective. | `~/.claude/projects/` rollout |
 | `~/.codex/memories/` | Persistent memory store (gated on `features.memories`, currently `experimental, false`). | `~/.claude/CLAUDE.md` + per-project `CLAUDE.md` |
 
-`autocc install --agent codex` should write under `~/.codex/` (skills
-and, for the hook script, a plugin folder under
-`~/.codex/plugins/autocc/`), and either inject hook entries into
-`~/.codex/config.toml`'s `[hooks]` table or ship them inside the
-plugin's `hooks.json`. The plugin-shaped install is the more idiomatic
-choice — Codex has explicit infrastructure for plugins (marketplace,
-plugin/install request, `PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` env vars
-that the binary exposes to hook commands), and uninstall reduces to
-deleting one directory plus one marketplace entry.
+`autocc install --agent codex` should write the plugin folder at
+`~/plugins/autocc/` (the home-rooted convention from
+`plugin-creator/SKILL.md`) and register it via a marketplace entry
+in `~/.agents/plugins/marketplace.json` with
+`source.path: ./plugins/autocc` (which resolves relative to the
+marketplace's home anchor — per `plugin-creator/SKILL.md`'s
+worked example, "with `~/.agents/plugins/marketplace.json`,
+`./plugins/<plugin-name>` resolves to `~/plugins/<plugin-name>`",
+NOT to `~/.agents/plugins/<name>/` as a naive relative resolution
+would suggest).
+The skills and the hook script live inside the plugin folder; only
+the marketplace entry sits outside it. The plugin-shaped install is
+the idiomatic choice — Codex has explicit infrastructure for
+plugins (marketplace, `core-plugins/src/loader.rs`, `PLUGIN_ROOT` /
+`CLAUDE_PLUGIN_ROOT` env vars that the binary exposes to hook
+commands), and uninstall reduces to deleting one directory plus one
+marketplace entry.
+
+Alternative install paths exist — because discovery is
+marketplace-driven, the installer could put the plugin folder under
+`~/.codex/plugins/autocc/` (or anywhere else) and point the
+marketplace there. That's a TB-2-time call; recommend the canonical
+`~/plugins/autocc/` unless there's a specific reason to colocate
+with `CODEX_HOME`.
 
 ### 1b. Migration is a first-class concern for the codex binary
 
-The codex binary contains an `externalAgentConfig/detect` +
-`externalAgentConfig/import` JSON-RPC API explicitly designed to
-detect a `~/.claude` / `CLAUDE.md` / `settings.json` / `hooks.json`
-/ `AGENTS.md` / `.agents/` install and migrate it into the codex
-equivalents. The migration item types the binary serializes include
-`AGENTS_MD`, `CONFIG`, `SKILLS`, `PLUGINS`, `MCP_SERVER_CONFIG`,
-`SUBAGENTS`, `HOOKS`. Implication for autocc: a clean Codex install
-path is in scope, but the installer can lean on Codex's own importer
-for the *user's* pre-existing claude artifacts rather than reinventing
-that work.
+Codex has an external-config-migration capability, surfaced via the
+`external_migration` feature flag (described in `codex features
+list` as "Show a startup prompt when Codex detects migratable
+external agent config for this machine or project"). The binary
+contains `ExternalConfigMigrationPrompts` config types, a
+`HookMigration` item type, and `import external agent config
+migration items` log strings — confirming migration is implemented
+and includes a hook-migration item path. Exact JSON-RPC method
+names and the full item-type enum are NOT surfaced in the binary's
+string table at 0.128.0 (`grep externalAgentConfig` on the binary
+returns nothing); treat the migration API as "capability exists,
+surface area not nailed down — verify against Codex's source or
+runtime behavior before depending on it." Implication for autocc:
+a clean install path is in scope, and *opportunistically* leaning
+on Codex's importer for pre-existing Claude artifacts is plausible,
+but the installer should not assume specific method names without
+a runtime probe.
 
 ### 1c. Extension points the binary exposes
 
@@ -101,9 +125,18 @@ The runnable extension surface, in the order autocc cares about:
    `description`, `skills` (default `./skills/`), `hooks` (e.g.
    `./hooks.json`), `mcpServers`, optional `apps`, and an `interface`
    block with `displayName`, `category`, etc. for UI surfacing.
-5. **Statusline.** No analog. `codex --help` and the binary strings
-   table contain no `statusLine` / `statusline` configuration knob.
-   See §4 for what this breaks.
+5. **Statusline.** Codex has a `status_line` TUI config key and a
+   `/statusline` slash command (binary string: *"Use /statusline to
+   configure which items appear in the status line."*), plus
+   internal `StatusLineSetup` / `StatusLineSetupCancelled` /
+   `StatusLineBranchUpdated` events. But the `status_line` config
+   is a **widget list** (branch, tokens, model, etc.) that the codex
+   TUI renders itself, **not** a shell-out point — there's no
+   analog to Claude Code's `statusLine.command =
+   "/path/to/script.sh"` that spawns an external process per
+   refresh. autocc's statusline-shell-script mechanism therefore
+   has no Codex equivalent. See §4 for what this breaks for the
+   `.autocc/context.json` side effect.
 6. **Features flags.** `codex features list | enable | disable`. Many
    are gated; the relevant ones for autocc are `codex_hooks` (already
    stable+on), `plugin_hooks` (under development), `memories`
@@ -114,7 +147,8 @@ The runnable extension surface, in the order autocc cares about:
 ## 2. Hook event mapping
 
 Codex's hook event vocabulary, taken from the binary's
-`HookEventName` enum and the matching `events/<name>.rs` source paths:
+`HookEventName` enum (`pre-tool-use|permission-request|post-tool-use|session-start|user-prompt-submit|stop` as a single token in the strings table) and the matching `events/<name>.rs` source paths.
+**Six events total — no `notification`, `elicitation`, `post_compact`, `ask_user_question`, or `enter_plan_mode` variants exist in 0.128.0.**
 
 | Wire name (snake_case) | CamelCase (JSON `hookEventName`) | Source file referenced in binary |
 |---|---|---|
@@ -124,7 +158,6 @@ Codex's hook event vocabulary, taken from the binary's
 | `session_start` | `SessionStart` | `codex-rs/hooks/src/events/session_start.rs` |
 | `user_prompt_submit` | `UserPromptSubmit` | `codex-rs/hooks/src/events/user_prompt_submit.rs` |
 | `stop` | `Stop` | `codex-rs/hooks/src/events/stop.rs` |
-| `notification` | `Notification` | (no dedicated events file string surfaced, but the name appears in the `HookEventName` enum) |
 
 Per-event JSON contract resembles Claude Code's closely. Hook input
 fields the binary parses from stdin include `session_id`, `turn_id`,
@@ -172,9 +205,6 @@ follow-up work:
 - `post_tool_use` — fires after each tool returns. Currently autocc
   doesn't need this on Claude Code, but it's the right place to hang
   cross-cutting per-tool logging if a future task wants it.
-- `notification` — present in `HookEventName` but underdocumented in
-  the strings table; useful surface area to investigate before
-  building any polyfill.
 
 ---
 
@@ -185,7 +215,7 @@ Each of autocc's six skills, against Codex's skill loader behavior:
 | Skill | Claude-Code-specific assumptions | Codex portability | Required glue |
 |---|---|---|---|
 | `afk` | Reads `$CLAUDE_PROJECT_DIR` env var to locate session root; creates `.autocc/flag`; invokes `/reflector` as a sibling skill. | **needs-provider-specific-glue** | Codex does not set `CLAUDE_PROJECT_DIR`. The skill body must fall back to `${CODEX_PROJECT_DIR:-$PWD}` (or read codex's project root from `$PWD`, since `codex -C/--cd` rewrites cwd). Slash-command invocation (`/reflector`) works in both — Codex's TUI accepts `/<skill-name>` to trigger a skill — so the skill-to-skill call is fine. |
-| `reflector` | Reads `$CLAUDE_PROJECT_DIR`; reads `CLAUDE.md`'s `## Autopilot` section; depends on the Stop hook re-blocking idle to keep the loop alive; reads `.autocc/context.json` (statusline-written) for the 70%-context CHECKPOINT trigger. | **needs-provider-specific-glue** | Same env-var fallback as `afk`. Codex reads `CLAUDE.md` natively (the externalAgentConfig migration path proves this), so the `## Autopilot` section parse works as-is. The Stop-hook loop wiring works as-is (codex's `stop` hook implements the same `decision:block` contract). The 70%-CHECKPOINT trigger is the load-bearing break: Codex has no statusline (§4), so `context.json` is never written — the CHECKPOINT logic must instead read context usage from the session's own state. Codex emits `ThreadTokenUsageUpdated` / `token_count` Events that carry token-usage deltas, but those don't reach a skill's prompt context the way a statusline-written file does. Polyfill candidates: (a) parse the most recent `~/.codex/sessions/<id>.jsonl` rollout for token-usage events, (b) accept "checkpoint every N completed tasks" instead of "checkpoint at N% context," (c) accept the degradation and document it. |
+| `reflector` | Reads `$CLAUDE_PROJECT_DIR`; reads `CLAUDE.md`'s `## Autopilot` section; depends on the Stop hook re-blocking idle to keep the loop alive; reads `.autocc/context.json` (statusline-written) for the 70%-context CHECKPOINT trigger. | **needs-provider-specific-glue** | Same env-var fallback as `afk`. The skill's `CLAUDE.md` parse works regardless of provider because it's done via the agent's shell tool (`cat CLAUDE.md` / file read), not a provider-injected system-prompt mechanism — both Claude Code and Codex expose shell access, so the `## Autopilot` parse is portable as-is. (Codex's own native agent-instructions file is `AGENTS.md`, which the external-config-migration prompt converts `CLAUDE.md` into; this is independent of the skill's parse path.) The Stop-hook loop wiring works as-is (codex's `stop` hook implements the same `decision:block` contract). The 70%-CHECKPOINT trigger is the load-bearing break: Codex has no statusline shell-out (§4), so `context.json` is never written — the CHECKPOINT logic must instead read context usage from the session's own state. Codex emits `ThreadTokenUsageUpdated` / `token_count` Events that carry token-usage deltas, but those don't reach a skill's prompt context the way a statusline-written file does. Polyfill candidates: (a) parse the most recent `~/.codex/sessions/<id>.jsonl` rollout for token-usage events, (b) accept "checkpoint every N completed tasks" instead of "checkpoint at N% context," (c) accept the degradation and document it. |
 | `taskboard` | Reads/writes `TASKS.md`; reads `CLAUDE.md` `## Autopilot` paths; references `.autocc/tasks/`, `.autocc/progress.md`. No env-var dependence. | **portable-as-is** | None. Codex reads `CLAUDE.md` (and `AGENTS.md`) natively. The skill body's `aliases:` frontmatter key is not in the codex skill-creator spec; codex skill loaders appear to ignore unknown keys, but if a future codex version validates frontmatter strictly the `aliases:` line would need to move into `metadata:`. |
 | `tb` | Pure alias for `/taskboard` (one body line). | **portable-as-is** | None. The alias mechanism in autocc is just a separately-installed skill that re-invokes `/taskboard`; codex handles that fine. |
 | `housekeeping` | Detects project tooling via `pyproject.toml` / `package.json` / `Makefile` / `Cargo.toml` etc. and runs the project's linter/tests. No Claude-specific surface. | **portable-as-is** | None. |
@@ -194,6 +224,33 @@ Each of autocc's six skills, against Codex's skill loader behavior:
 No skill in autocc is classified `no-codex-analog` — every one of them
 can run under Codex, three of them as-is and three with cosmetic /
 env-var glue.
+
+### 3a. Provider-portable skills — env-var contract
+
+TB-4 closed the three `needs-provider-specific-glue` rows above by
+decoupling the skill bodies from Claude-only env vars. The contract
+the skills now follow (and the installer Codex branch wires to
+match):
+
+| Env var | Default | Used by | Set by |
+|---|---|---|---|
+| `AUTOCC_PROJECT_DIR` | _(unset)_ | `afk`, `reflector` — resolved via the chain `${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}` to locate the session root (`.autocc/flag`, `CLAUDE.md`, `TASKS.md`, etc.) | Operator override only — the skills walk to `CLAUDE_PROJECT_DIR` then `CODEX_PROJECT_DIR` then `$PWD` automatically. Sets this when the operator wants to pin a non-default project root regardless of which harness is running. |
+| `CLAUDE_PROJECT_DIR` | _(unset)_ | Same as above; second in the chain | Claude Code CLI sets this for every session. |
+| `CODEX_PROJECT_DIR` | _(unset)_ | Same as above; third in the chain | Codex CLI (when present); the autocc Codex plugin's `hooks.json` `env` block can also set it explicitly for environments where Codex doesn't export it natively. |
+| `AUTOCC_AGENT_NAME` | `Claude` | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_NAME:-Claude}` | The autocc Codex plugin (`~/plugins/autocc/hooks.json` `env` block) sets it to `Codex` so commits made under Codex are attributed correctly. Unset = preserve historical Claude-side trailer. |
+| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` | `commit-changes` — interpolated into the `Co-Authored-By` trailer as `${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}` | The autocc Codex plugin sets it to `noreply@openai.com`. Unset = preserve historical Claude-side trailer. |
+
+The fallback chain's ordering — `AUTOCC_*` first, then each provider's
+native var, then `$PWD` — keeps the skill bodies provider-neutral
+without a runtime branch. A future third provider can opt in just by
+exporting `AUTOCC_PROJECT_DIR` (and, optionally, `AUTOCC_AGENT_NAME`
+/ `AUTOCC_AGENT_EMAIL`) at session start; no skill edit needed.
+
+The reflector skill's `## 5 CHECKPOINT` branch still reads
+`.autocc/context.json`, which today is only written by the Claude Code
+statusline; on Codex the read returns empty and the branch no-ops.
+That's an intentionally-deferred polyfill — see the Statusline
+shell-out row in §4 below.
 
 ---
 
@@ -236,18 +293,22 @@ one-line rationale.
   Claude Code's immediate inject, but preserves the loop-resume
   contract.
 
-- **Statusline — document-and-skip.** Codex has no statusline
-  config. The autocc statusline's primary side effect — writing
+- **Statusline shell-out — document-and-skip.** Codex has a
+  `status_line` TUI config but only as a widget list — there's no
+  shell-command hook (no analog to Claude Code's `statusLine.command`).
+  The autocc statusline script's primary side effect — writing
   `.autocc/context.json` for the reflector's 70%-context CHECKPOINT
-  trigger — has no home. Recommend the Codex-side reflector skill
-  drop the 70%-context branch entirely and rely on either
+  trigger — has no home on Codex. Recommend the Codex-side reflector
+  skill drop the 70%-context branch entirely and rely on either
   (a) the existing per-task CHECKPOINT-on-completion pass, or
   (b) post-hoc parsing of `~/.codex/sessions/<id>.jsonl` for
   `ThreadTokenUsageUpdated` events if a smarter cadence is needed.
 
 The pattern: Codex's hook surface is broadly a strict superset of
 Claude Code's for the events we share names with, but two of autocc's
-six hook events (`Elicitation`, `PostCompact`) and one tool matcher
-(`EnterPlanMode`) have no direct binding. The installer task can
-proceed; the polyfill / accept decisions above are inputs to its
-briefing.
+six hook events (`Elicitation`, `PostCompact`) have no direct binding,
+and two of the matchers autocc relies on (`AskUserQuestion`,
+`EnterPlanMode`) don't exist as Codex tools — so even though
+`pre_tool_use` is available, those matchers never fire. The
+installer task can proceed; the polyfill / accept decisions above
+are inputs to its briefing.

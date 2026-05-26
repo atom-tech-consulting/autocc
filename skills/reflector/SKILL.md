@@ -13,9 +13,25 @@ Autonomous work loop. Picks tasks from the taskboard, executes them, documents p
 - Agent has finished assigned work and wants to stay productive
 - Continuous improvement passes on the codebase
 
+## Project-root resolution
+
+This skill, and the autopilot stop-hook it pairs with, both anchor at
+the project root. Resolve the root with this provider-neutral fallback
+chain (first set wins):
+
+    PROJECT_DIR="${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}"
+
+`AUTOCC_PROJECT_DIR` is the portable override; `CLAUDE_PROJECT_DIR`
+covers Claude Code; `CODEX_PROJECT_DIR` covers Codex; `$PWD` is the
+last-resort fallback when neither harness exports a project-root
+variable. The agent's native `CLAUDE.md` parse (below) and the
+`.autocc/` reads/writes throughout this skill all anchor at
+`$PROJECT_DIR`.
+
 ## Bootstrap (run FIRST, before any work)
 
-1. **Read CLAUDE.md `## Autopilot` section** for resolved paths:
+1. **Read CLAUDE.md `## Autopilot` section** for resolved paths
+   (read it at `$PROJECT_DIR/CLAUDE.md`):
    - Task list (default: `TASKS.md`)
    - Task briefings directory (default: `.autocc/tasks/`)
    - Progress log (default: `.autocc/progress.md`)
@@ -156,10 +172,11 @@ Based on the outcome from step 3:
 Check context usage:
 
 ```bash
-used_pct=$(jq -r '.context_window.used_percentage // empty' "$CLAUDE_PROJECT_DIR/.autocc/context.json" 2>/dev/null)
+PROJECT_DIR="${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}}"
+used_pct=$(jq -r '.context_window.used_percentage // empty' "$PROJECT_DIR/.autocc/context.json" 2>/dev/null)
 ```
 
-If `context.json` is missing or `used_pct` is empty, skip checkpoint and go to step 6.
+If `context.json` is missing or `used_pct` is empty, skip checkpoint and go to step 6. (Today only the Claude Code statusline writes `context.json`; under Codex this read returns empty and the branch no-ops — a polyfill for Codex token-usage tracking is a separate follow-up.)
 
 **Below 70%:** No checkpoint. Go to step 6.
 

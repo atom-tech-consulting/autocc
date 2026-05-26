@@ -17,3 +17,9 @@
 - **Summary:** Added autocc-hooks-codex.py emitting Codex's permissionDecision/stop wire shapes (with defensive no-ops for elicitation / post_compact / pre_tool_use), rewired installer Codex branch to copy the real script in place of the stub, and added 24 subprocess-driven tests covering all event paths + PLUGIN_ROOT/CLAUDE_PLUGIN_ROOT env-var fallbacks; full suite 62 passed / 1 skipped.
 - **Files:** src/autocc/hooks/autocc-hooks-codex.py, src/autocc/installer.py, tests/test_autocc_hook_codex.py
 - **Tests:** pass
+
+## [2026-05-18] TB-4: Decouple afk / reflector / commit-changes skills from Claude-only assumptions
+- **Commit:** `4122ce6`
+- **Summary:** Replaced bare $CLAUDE_PROJECT_DIR with the ${AUTOCC_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$PWD}}} fallback chain in afk + reflector skills, parameterized commit-changes' Co-Authored-By trailer via ${AUTOCC_AGENT_NAME:-Claude} / ${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}, added tests/test_skills_portable.py (11 tests, all pass) pinning the new contract, and documented the env-var contract in docs/codex-mapping.md §3a; full pytest suite passes (73 passed, 1 skipped).
+- **Files:** skills/afk/SKILL.md, skills/reflector/SKILL.md, skills/commit-changes/SKILL.md, docs/codex-mapping.md, tests/test_skills_portable.py
+- **Tests:** pass

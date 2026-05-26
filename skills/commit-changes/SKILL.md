@@ -61,15 +61,28 @@ Stage the work files, TASKS.md, and progress.md together in one commit:
 git add <changed files> TASKS.md .autocc/progress.md
 ```
 
-Commit using heredoc syntax:
+Commit using heredoc syntax. The `Co-Authored-By` trailer is
+parameterized by two env vars so the same skill works under both
+Claude Code and Codex (defaults preserve the Claude-side behavior
+when neither var is set; the autocc Codex plugin's `hooks.json` `env`
+block sets them to `Codex` / `noreply@openai.com`):
+
+| Env var | Default |
+|---|---|
+| `AUTOCC_AGENT_NAME` | `Claude` |
+| `AUTOCC_AGENT_EMAIL` | `noreply@anthropic.com` |
+
+Because the trailer needs shell variable expansion, the heredoc here
+is **unquoted** (`<<EOF`, not `<<'EOF'`). If your commit body
+contains literal `$`, `` ` ``, or `\`, escape them in the body:
 
 ```bash
-git commit -m "$(cat <<'EOF'
+git commit -m "$(cat <<EOF
 <first line: imperative summary>
 
 - <bullet point for each logical change>
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-Authored-By: ${AUTOCC_AGENT_NAME:-Claude} <${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}>
 EOF
 )"
 ```
@@ -77,7 +90,7 @@ EOF
 **Commit message guidelines:**
 - First line: imperative, under 72 chars, summarizes the change
 - Body (after blank line): bullet points for each logical change
-- Always end with the `Co-Authored-By` trailer
+- Always end with the parameterized `Co-Authored-By` trailer shown above (never hard-code the agent name or email)
 - Match the style of recent commits in the repo
 
 ### 5. Confirm
@@ -92,4 +105,4 @@ Tell the user:
 - **Always update both TASKS.md and progress.md.** Even if changes are minor, the audit trail matters.
 - **Never commit secrets.** Skip `.env`, credentials, tokens. Warn the user if they're in the diff.
 - **Do not push.** Reflector/autopilot work is local-only by convention. The human decides when to push.
-- **Co-author trailer is mandatory.** Always include it.
+- **Co-author trailer is mandatory.** Always include it, and always use the parameterized `${AUTOCC_AGENT_NAME:-Claude} <${AUTOCC_AGENT_EMAIL:-noreply@anthropic.com}>` form so the trailer reflects the provider running the session.
